@@ -1,279 +1,182 @@
-# X.com Auto-Reply Service
+# Twitter Agent Browser
 
-An intelligent automated service that monitors your X.com "For You" feed, selects engaging tweets, and generates thoughtful, educational replies using Perplexity AI's web search capabilities.
+An automated browser application that processes tweets from your X.com timeline and generates responses using Perplexity.ai.
 
-## 🎯 Overview
+## 🎯 What This Does
 
-This service automatically:
-- Fetches tweets from your X.com "For You" feed every hour
-- Selects the top 5 most engaging tweets using a sophisticated scoring algorithm
-- Generates contrarian, educational replies using Perplexity AI with web search
-- Posts replies automatically while respecting rate limits and safety guidelines
-
-## 📋 Documentation
-
-- **[Product Requirements Document](PRODUCT_REQUIREMENTS.md)** - Complete product specifications, features, and business requirements
-- **[Technical Requirements Document](TECHNICAL_REQUIREMENTS.md)** - Detailed technical architecture, API specifications, and implementation details
+1. **Extracts Tweets**: Navigates to X.com and extracts tweets from your "For You" timeline
+2. **Processes with Perplexity**: Sends each tweet content to Perplexity.ai with a custom prompt
+3. **Posts Responses**: Takes the Perplexity response and posts it as a reply to the original tweet
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.9 or higher
-- X.com API access (API v2 with read/write permissions)
-- Perplexity API subscription
-- Unix-like system with cron support
-
-### Required API Credentials
-
-You'll need the following credentials:
-
-#### X.com API Credentials
-- Bearer Token
-- API Key
-- API Secret
-- Access Token
-- Access Token Secret
-
-#### Perplexity API Credentials
-- API Key
+- Python 3.11+ (installed via Homebrew)
+- Google Chrome browser
+- Active X.com (Twitter) account (logged in)
+- Active Perplexity.ai account (logged in)
 
 ### Installation
 
-```bash
-# Clone the repository
-git clone <repository_url>
-cd x-reply-service
+1. **Clone/Navigate to the project directory**
+   ```bash
+   cd /Users/amirerfaneshratifar/workspace/twitter-agent-browser
+   ```
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+2. **Activate the virtual environment**
+   ```bash
+   source .venv/bin/activate
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
+3. **Configure settings (optional)**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your preferred settings
+   ```
 
-# Setup configuration
-cp config/config.yaml.example config/config.yaml
-# Edit config.yaml with your preferences
+4. **Run the application**
+   ```bash
+   python run_agent.py
+   ```
 
-# Setup credentials securely
-python setup_credentials.py
-# Follow prompts to enter your API keys
+## ⚙️ Configuration
+
+Edit the `.env` file to customize behavior:
+
+```env
+# Browser settings
+HEADLESS=false                    # Set to true to run without visible browser
+
+# Rate limiting (in seconds)
+DELAY_BETWEEN_TWEETS=30          # Wait time between processing tweets
+MAX_TWEETS_PER_SESSION=5         # Maximum tweets to process per run
+
+# Perplexity settings
+PERPLEXITY_WAIT_TIME=15          # Time to wait for Perplexity response
 ```
 
-### Configuration
+## 📂 Files
 
-Edit `config/config.yaml` to customize:
+- `twitter_agent.py` - Basic implementation
+- `twitter_agent_advanced.py` - Advanced implementation (recommended)
+- `run_agent.py` - Interactive runner script
+- `.env` - Configuration file
+- `requirements.txt` - Python dependencies
 
-```yaml
-selection:
-  max_tweets_per_run: 5
-  min_engagement_threshold: 10
-  max_tweet_age_hours: 4
-  exclude_retweets: true
-  exclude_replies: true
-  blacklisted_users: []
-  blacklisted_keywords: []
+## 🎨 The Prompt
 
-reply:
-  base_prompt: "write an impactful reply to the following so that it teaches something new and contrary to the status-quo views: {tweet_content}"
-  max_reply_length: 280
-  temperature: 0.7
-  model: "llama-3.1-sonar-small-128k-online"
+The agent uses this prompt template for Perplexity:
 
-app:
-  log_level: "INFO"
-  dry_run: false  # Set to true for testing without posting
+```
+Rules: Do NOT use double hyphens, do NOT use double dashes, do NOT use double stars at all!
+Do not include citations or references. Limit the response length to 280 characters.
+Write a concise impactful paragraph to the following so that it teaches something new and
+contrary to the status-quo views:
+
+Content:
+{tweet_content}
+
+I repeat the most important rule: Do NOT use double hyphens, do NOT use double dashes,
+do NOT use double stars at all!
 ```
 
-### Testing
+## 🔧 Advanced Features
 
-```bash
-# Test the service without posting replies
-python main.py --dry-run
+The advanced agent (`twitter_agent_advanced.py`) includes:
 
-# Run with verbose logging
-python main.py --verbose
+- Better tweet extraction using HTML parsing
+- Robust browser tab management
+- Improved error handling
+- Tweet deduplication
+- More reliable element detection
+- Contextual tweet posting when direct replies fail
 
-# Test mode (processes fewer tweets for testing)
-python main.py --test-mode
-```
+## ✨ Recent Improvements
 
-### Production Deployment
+**Latest enhancements (see `IMPROVEMENTS.md` for details):**
 
-1. **Setup Cron Job**:
-```bash
-crontab -e
-# Add this line to run every hour:
-0 * * * * cd /path/to/x-reply-service && /path/to/venv/bin/python main.py >> /var/log/x-reply-service.log 2>&1
-```
+- **100+ Character Filter**: Only processes substantial tweets (100+ characters)
+- **Persistent Tweet Tracking**: Avoids reprocessing tweets across sessions using JSON storage
+- **Enhanced Perplexity Integration**: Fixed "element not interactable" errors with multiple fallback methods
 
-2. **Setup Log Rotation**:
-```bash
-sudo nano /etc/logrotate.d/x-reply-service
-```
+## ⚠️ Important Notes
 
-Add:
-```
-/var/log/x-reply-service.log {
-    daily
-    rotate 7
-    compress
-    delaycompress
-    missingok
-    notifempty
-    create 644 user user
-}
-```
+### Before Running
 
-## 🔧 Features
-
-### Tweet Selection Algorithm
-- **Engagement Scoring**: Weights likes, retweets, replies, and quotes
-- **Recency Factor**: Prioritizes recent tweets (within 4 hours)
-- **Content Quality Assessment**: Evaluates discussion potential
-- **Author Influence**: Considers follower count and verification status
-- **Smart Filtering**: Excludes inappropriate content and blacklisted users
-
-### AI-Powered Reply Generation
-- **Web Search Integration**: Uses Perplexity's real-time web search
-- **Contrarian Perspectives**: Generates thoughtful counter-arguments
-- **Educational Focus**: Provides valuable insights and information
-- **Safety Filtering**: Prevents inappropriate or harmful content
-- **Character Limit Compliance**: Ensures replies fit X.com's 280-character limit
-
-### Safety & Compliance
-- **Rate Limit Protection**: Stays well within API limits
-- **Content Safety Filters**: Prevents posting harmful content
-- **Account Protection**: Avoids behaviors that could lead to suspension
-- **Comprehensive Logging**: Tracks all activities for monitoring
-
-## 📊 Monitoring
-
-### Logs
-- **Application Log**: `/var/log/x-reply-service.log`
-- **Error Log**: `logs/error.log`
-- **Metrics Log**: `logs/metrics.log`
-
-### Key Metrics
-- Tweets processed per hour
-- Replies generated and posted
-- API error rates
-- Processing time per run
-- Content safety filter triggers
-
-### Health Checks
-```bash
-# Check service status
-python health_check.py
-
-# View recent activity
-tail -f /var/log/x-reply-service.log
-
-# Check error rates
-grep "ERROR" logs/error.log | tail -20
-```
-
-## 🛡️ Security
-
-### Credential Protection
-- Encrypted storage of API keys
-- Environment variable isolation
-- Secure file permissions (600)
-- No credentials in logs or code
+1. **Log into X.com** in your default Chrome browser
+2. **Log into Perplexity.ai** in the same browser
+3. **Ensure you're on the "For You" timeline** on X.com
 
 ### Rate Limiting
-- Conservative API usage (80% of limits)
-- Exponential backoff on failures
-- Circuit breaker pattern for API protection
-- Token bucket rate limiting implementation
 
-### Content Safety
-- Multi-layer content filtering
-- Blacklist support for users and keywords
-- Political content detection and avoidance
-- Harmful content pattern matching
+- The app includes built-in delays to avoid rate limiting
+- Default: 30 seconds between tweets, max 5 tweets per session
+- Adjust these values in `.env` as needed
 
-## 🔍 Troubleshooting
+### Browser Behavior
+
+- The browser will remain open after completion for inspection
+- Press Enter in the terminal to close the browser when done
+- The browser uses your existing Chrome profile to access logged-in accounts
+
+## 🐛 Troubleshooting
 
 ### Common Issues
 
-1. **Authentication Errors**
-   - Verify API credentials are correct
-   - Check API permissions (read/write access)
-   - Ensure tokens haven't expired
+1. **"Not logged in" error**
+   - Manually log into X.com and Perplexity.ai in Chrome
+   - Restart the script
 
-2. **Rate Limit Exceeded**
-   - Service automatically handles rate limits
-   - Check logs for excessive API usage
-   - Verify rate limiting configuration
+2. **No tweets extracted**
+   - Ensure you're on the "For You" timeline
+   - Try scrolling manually to load tweets
+   - Check if the page has finished loading
 
-3. **No Tweets Selected**
-   - Check feed access permissions
-   - Verify selection criteria aren't too restrictive
-   - Review blacklist settings
+3. **"Perplexity input field not found" error** ⭐ **FIXED**
+   - The app now tries 11+ different ways to find the input field
+   - Set `DEBUG_MODE=true` in `.env` for detailed troubleshooting
+   - Run `python test_perplexity.py` to test just Perplexity integration
+   - See `PERPLEXITY_FIXES.md` for detailed fix information
 
-4. **Reply Generation Failures**
-   - Verify Perplexity API key and quota
-   - Check network connectivity
-   - Review content safety filters
+4. **Perplexity response not found**
+   - Increase `PERPLEXITY_WAIT_TIME` in `.env`
+   - The app now uses 15+ strategies to extract responses
+   - Enable debug mode to see what's happening
+   - Check if Perplexity.ai is accessible and working
+
+5. **Failed to post replies**
+   - The app will fall back to posting new tweets with context
+   - Check X.com rate limits and posting restrictions
 
 ### Debug Mode
+
+Set these in `.env` to debug issues:
 ```bash
-# Run with debug logging
-python main.py --debug
-
-# Check configuration
-python -c "from src.config import load_config; print(load_config())"
-
-# Test API connections
-python test_apis.py
+HEADLESS=false     # Watch browser automation in real-time
+DEBUG_MODE=true    # Enable detailed logging and troubleshooting
 ```
 
-## 📈 Performance
+### Testing Individual Components
 
-### Expected Performance
-- **Processing Time**: < 5 minutes per run
-- **Memory Usage**: < 256MB
-- **API Requests**: ~50-100 per hour
-- **Success Rate**: > 95%
+- **Test Perplexity only**: `python test_perplexity.py`
+- **Test full setup**: `python test_setup.py`
 
-### Optimization Tips
-- Adjust `min_engagement_threshold` to filter low-quality tweets
-- Use `blacklisted_keywords` to avoid irrelevant topics
-- Set appropriate `max_tweet_age_hours` to focus on recent content
-- Monitor and adjust `temperature` for reply generation quality
+## 🚨 Ethical Considerations
 
-## 🤝 Contributing
+- **Use Responsibly**: This tool automates social media interactions
+- **Respect Rate Limits**: Don't overwhelm platforms with requests
+- **Content Quality**: Review generated responses for appropriateness
+- **Platform Terms**: Ensure compliance with X.com and Perplexity.ai terms of service
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+## 📜 License
 
-## 📄 License
+This project is for educational and personal use. Users are responsible for complying with all applicable terms of service and applicable laws.
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## 🔄 Updates
 
-## ⚠️ Disclaimer
-
-This service is designed to comply with X.com's Terms of Service and API guidelines. Users are responsible for:
-- Ensuring their API usage complies with X.com's policies
-- Monitoring generated content for appropriateness
-- Respecting rate limits and community guidelines
-- Using the service responsibly and ethically
-
-The authors are not responsible for any account suspensions, API violations, or other consequences resulting from the use of this service.
-
-## 🆘 Support
-
-For issues, questions, or contributions:
-- Open an issue on GitHub
-- Check the documentation in `PRODUCT_REQUIREMENTS.md` and `TECHNICAL_REQUIREMENTS.md`
-- Review logs for error details
-- Test with `--dry-run` mode first
-
----
-
-**Note**: This service requires active API subscriptions for both X.com and Perplexity. Ensure you understand the costs and rate limits before deploying to production.
+To update dependencies:
+```bash
+source .venv/bin/activate
+uv pip install --upgrade browser-use selenium python-dotenv aiohttp beautifulsoup4
+```
