@@ -31,16 +31,12 @@ logger = logging.getLogger(__name__)
 
 class SeleniumTwitterAgent:
     def __init__(self):
-        self.base_prompt = """Rules: Do NOT use double hyphens (--), do NOT use double dashes (--), do NOT use double stars (**) at all! Do NOT add ANY references or citations in the response. Do NOT use ANY math formula. Write IN LESS THAN 280 characters, impactful response to the following that teaches something new and contrary to the status-quo views:
-\n\n
-Content: \n
-{tweet_content}
-"""
+        self.base_prompt = "Write a short <280c impactful, entertaining response teaching a fresh, complementary insight about the following text: '{tweet_content}'; avoid all the followings in your response: double dashes or double hyphens like --,**,references,citations,math formulas. Do NOT start the response with numbers and do start with words"
 
         # Configuration from environment
-        self.delay_between_tweets = int(os.getenv('DELAY_BETWEEN_TWEETS', 30))
+        self.delay_between_tweets = int(os.getenv('DELAY_BETWEEN_TWEETS', 5))
         self.max_tweets_per_session = int(os.getenv('MAX_TWEETS_PER_SESSION', 5))
-        self.perplexity_wait_time = int(os.getenv('PERPLEXITY_WAIT_TIME', 60))
+        self.perplexity_wait_time = int(os.getenv('PERPLEXITY_WAIT_TIME', 90))
         self.perplexity_responses_per_chat = max(1, int(os.getenv('PERPLEXITY_RESPONSES_PER_CHAT', 2)))
         self.headless = os.getenv('HEADLESS', 'false').lower() == 'true'
         self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
