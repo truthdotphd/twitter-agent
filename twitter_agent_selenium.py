@@ -36,7 +36,7 @@ class SeleniumTwitterAgent:
         # Configuration from environment
         self.delay_between_tweets = int(os.getenv('DELAY_BETWEEN_TWEETS', 5))
         self.max_tweets_per_session = int(os.getenv('MAX_TWEETS_PER_SESSION', 5))
-        self.perplexity_wait_time = int(os.getenv('PERPLEXITY_WAIT_TIME', 30))
+        self.perplexity_wait_time = int(os.getenv('PERPLEXITY_WAIT_TIME', 60))
         self.perplexity_responses_per_chat = max(1, int(os.getenv('PERPLEXITY_RESPONSES_PER_CHAT', 2)))
         self.headless = os.getenv('HEADLESS', 'false').lower() == 'true'
         self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
