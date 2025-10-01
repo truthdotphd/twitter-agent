@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 class SeleniumTwitterAgent:
     def __init__(self):
-        self.base_prompt = "Write a fact-based short (less than 280 characters) impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text: '{tweet_content}'; avoid all the followings in your response: double dashes or double hyphens like --,**,references,citations,math formulas. Do NOT start the response with numbers and do start with words. Do NOT ask me anything further and only output the response."
+        self.base_prompt = "Rules: avoid all the followings in your response: double dashes or double hyphens like --,**,references,citations,math formulas. Do NOT ask me anything further and only output the response and start the response with a full sentence that doesn't start with numbers. Write a fact-based SHORT impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text: '{tweet_content}'"
 
         # Configuration from environment
         self.delay_between_tweets = int(os.getenv('DELAY_BETWEEN_TWEETS', 5))
@@ -2027,7 +2027,7 @@ class SeleniumTwitterAgent:
                     self._save_processed_tweets()
                 
                 # Wait between tweets
-                wait_time = random.randint(25, 35)
+                wait_time = 0
                 logger.info(f"Waiting {wait_time} seconds before next tweet...")
                 time.sleep(wait_time)
             
