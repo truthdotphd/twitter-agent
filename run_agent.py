@@ -45,7 +45,36 @@ def show_menu():
     print("4. Exit")
     print()
 
+def show_feed_menu():
+    print("Choose Twitter feed:")
+    print("1. Following (Default - tweets from accounts you follow)")
+    print("2. For you (Recommended tweets from Twitter's algorithm)")
+    print()
+
+def get_feed_choice():
+    """Get user's feed preference and set environment variable"""
+    while True:
+        show_feed_menu()
+        choice = input("Enter your choice (1-2) [default: 1]: ").strip()
+
+        if choice == '' or choice == '1':
+            os.environ['TWITTER_FEED_TYPE'] = 'following'
+            print("✅ Selected: Following feed")
+            return 'following'
+        elif choice == '2':
+            os.environ['TWITTER_FEED_TYPE'] = 'for you'
+            print("✅ Selected: For you feed")
+            return 'for you'
+        else:
+            print("❌ Invalid choice. Please enter 1 or 2.")
+            print()
+
 def run_selenium_agent():
+    print("\n📺 Feed Selection")
+    print("=" * 30)
+    feed_type = get_feed_choice()
+    print(f"\n🚀 Starting Selenium Agent with '{feed_type.title()}' feed...")
+
     from twitter_agent_selenium import main
     main()
 

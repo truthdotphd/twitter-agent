@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 class SeleniumTwitterAgent:
     def __init__(self):
-        self.base_prompt = "Rules: avoid all the followings in your response: double dashes or double hyphens like --,**,references,citations,math formulas. Do NOT ask me anything further and only output the response and start the response with a full sentence that doesn't start with numbers. Write a fact-based SHORT impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text: '{tweet_content}'"
+        self.base_prompt = "Rules: keep your response less than 500 characters. avoid all the followings in your response: avoid double dashes --, avoid double hyphens like --,avoid **,avoid references,avoid citations,avoid math formulas. Do NOT ask me anything further and only output the response and start the response with a full sentence that doesn't start with numbers. Write a short, concise, fact-based impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text: '{tweet_content}'"
 
         # Configuration from environment
         self.delay_between_tweets = int(os.getenv('DELAY_BETWEEN_TWEETS', 5))
@@ -40,6 +40,7 @@ class SeleniumTwitterAgent:
         self.perplexity_responses_per_chat = max(1, int(os.getenv('PERPLEXITY_RESPONSES_PER_CHAT', 2)))
         self.headless = os.getenv('HEADLESS', 'false').lower() == 'true'
         self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
+        self.feed_type = os.getenv('TWITTER_FEED_TYPE', 'following').lower()
 
         # Configure debug logging
         if self.debug_mode:
@@ -55,6 +56,7 @@ class SeleniumTwitterAgent:
         logger.info(f"   ⏱️ Perplexity wait time: {self.perplexity_wait_time}s")
         logger.info(f"   💬 Responses per chat: {self.perplexity_responses_per_chat}")
         logger.info(f"   👻 Headless mode: {self.headless}")
+        logger.info(f"   📺 Twitter feed: {self.feed_type.title()}")
 
         self.driver = None
 
@@ -158,6 +160,11 @@ class SeleniumTwitterAgent:
                 # Look for the home timeline or user menu
                 home_element = self.driver.find_element(By.CSS_SELECTOR, '[data-testid="AppTabBar_Home_Link"]')
                 logger.info("Successfully logged in to X.com")
+
+                # Select the appropriate feed after successful login
+                if not self.select_feed():
+                    logger.warning("Failed to select feed, continuing with default")
+
                 return True
             except NoSuchElementException:
                 try:
@@ -173,6 +180,83 @@ class SeleniumTwitterAgent:
 
         except Exception as e:
             logger.error(f"Error navigating to X.com: {e}")
+            return False
+
+    def select_feed(self) -> bool:
+        """Select the appropriate Twitter feed (For you or Following)"""
+        try:
+            logger.info(f"Selecting Twitter feed: {self.feed_type.title()}")
+
+            # If 'for you' is selected, no action needed (it's usually the default)
+            if self.feed_type == 'for you':
+                logger.info("Using 'For you' feed (default)")
+                return True
+
+            # For 'following' feed, we need to click on the Following tab
+            if self.feed_type == 'following':
+                # Common selectors for the Following tab
+                following_selectors = [
+                    '[role="tab"] span:contains("Following")',
+                    '[data-testid="ScrollSnap-List"] div[role="tab"]:nth-child(2)',
+                    'div[role="tablist"] div[role="tab"]:contains("Following")',
+                    'a[href="/home"]:contains("Following")',
+                    '[aria-label="Following timeline"]',
+                    'span:contains("Following")'
+                ]
+
+                # Try to find and click the Following tab
+                for selector in following_selectors:
+                    try:
+                        # Handle :contains() pseudo-selector
+                        if ':contains(' in selector:
+                            # Extract the text to search for
+                            text_to_find = selector.split(':contains("')[1].split('")')[0]
+                            base_selector = selector.split(':contains(')[0]
+
+                            # Find elements using the base selector
+                            elements = self.driver.find_elements(By.CSS_SELECTOR, base_selector) if base_selector else []
+
+                            # If no base selector, search all elements
+                            if not base_selector:
+                                elements = self.driver.find_elements(By.XPATH, f"//*[contains(text(), '{text_to_find}')]")
+
+                            for element in elements:
+                                if text_to_find.lower() in element.text.lower() and element.is_displayed():
+                                    element.click()
+                                    logger.info(f"✅ Successfully clicked Following tab using: {selector}")
+                                    time.sleep(2)
+                                    return True
+                        else:
+                            # Regular CSS selector
+                            element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                            if element.is_displayed():
+                                element.click()
+                                logger.info(f"✅ Successfully clicked Following tab using: {selector}")
+                                time.sleep(2)
+                                return True
+                    except Exception as e:
+                        logger.debug(f"Selector {selector} failed: {e}")
+                        continue
+
+                # Fallback: try to find any element with "Following" text
+                try:
+                    following_element = self.driver.find_element(By.XPATH, "//span[contains(text(), 'Following')]")
+                    if following_element.is_displayed():
+                        following_element.click()
+                        logger.info("✅ Successfully clicked Following tab using fallback method")
+                        time.sleep(2)
+                        return True
+                except Exception as e:
+                    logger.debug(f"Fallback method failed: {e}")
+
+                logger.warning("Could not find Following tab, continuing with default feed")
+                return False
+
+            logger.warning(f"Unknown feed type: {self.feed_type}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error selecting feed: {e}")
             return False
 
     def extract_tweets_from_timeline(self) -> List[Dict[str, str]]:
