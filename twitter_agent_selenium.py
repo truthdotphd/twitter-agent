@@ -21,6 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import random
+import undetected_chromedriver as uc
 
 # Load environment variables
 load_dotenv()
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 class SeleniumTwitterAgent:
     def __init__(self):
-        self.base_prompt = "Rules: keep your response less than 500 characters. avoid all the followings in your response: avoid double dashes --, avoid double hyphens like --,avoid **,avoid references,avoid citations,avoid math formulas. Do NOT ask me anything further and only output the response and start the response with a full sentence that doesn't start with numbers. Write a short fact-based impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text: '{tweet_content}'"
+        self.base_prompt = "Rules: keep your response less than 500 characters. avoid all the followings in your response: avoid double dashes --, avoid double hyphens like --,avoid **,avoid references,avoid citations,avoid math formulas. Do NOT ask me anything further and only output the response and start the response with a full sentence that doesn't start with numbers. Write a short fact-based impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text in a human-like entertaining language: '{tweet_content}'"
 
         # Configuration from environment
         self.delay_between_tweets = int(os.getenv('DELAY_BETWEEN_TWEETS', 5))
@@ -103,29 +104,136 @@ class SeleniumTwitterAgent:
         return hashlib.md5(tweet_content.encode('utf-8')).hexdigest()
 
     def setup_driver(self):
-        """Set up Chrome driver with appropriate options"""
-        logger.info("Setting up Chrome driver...")
+        """Set up Chrome driver with undetected_chromedriver for better reliability"""
+        logger.info("Setting up Undetected Chrome driver...")
 
-        chrome_options = Options()
+        # Configure undetected_chromedriver options
+        chrome_options = uc.ChromeOptions()
 
         if self.headless:
-            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--headless=new")
 
-        # Use existing Chrome profile to maintain login sessions
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--no-sandbox")
+        # ALWAYS use a separate Chrome profile for automation (avoids conflicts)
+        automation_profile_dir = Path.home() / ".chrome_automation_profile"
+        automation_profile_dir.mkdir(exist_ok=True)
+        user_data_dir = str(automation_profile_dir)
+        logger.info(f"📁 Using automation-specific Chrome profile: {user_data_dir}")
+        logger.info("ℹ️  First time: You'll need to log into X.com manually")
+        logger.info("ℹ️  After that: Logins are remembered!")
+        
+        chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+        
+        # Use a specific profile directory for this session
+        profile_directory = os.getenv('CHROME_PROFILE_DIRECTORY', 'TwitterAgent')
+        chrome_options.add_argument(f"--profile-directory={profile_directory}")
+
+        # Additional options for stability
         chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--no-first-run")
+        chrome_options.add_argument("--no-default-browser-check")
+        chrome_options.add_argument("--disable-popup-blocking")
+        
+        # Disable automation indicators (undetected_chromedriver handles most of this)
+        chrome_options.add_experimental_option("prefs", {
+            "credentials_enable_service": False,
+            "profile.password_manager_enabled": False,
+            "profile.default_content_setting_values.notifications": 2  # Disable notifications
+        })
 
         try:
-            self.driver = webdriver.Chrome(options=chrome_options)
-            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            logger.info("Chrome driver initialized successfully")
+            logger.info("🚀 Initializing undetected Chrome driver...")
+            logger.info("⏳ This may take 10-30 seconds on first run...")
+            logger.info("💻 System: macOS ARM64 (Apple Silicon)")
+            
+            # Use undetected_chromedriver with specific settings for ARM Macs
+            # Get Chrome major version
+            import platform
+            import subprocess
+            
+            try:
+                chrome_version_output = subprocess.check_output([
+                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", 
+                    "--version"
+                ]).decode('utf-8').strip()
+                chrome_version = chrome_version_output.split()[-1]
+                chrome_major_version = int(chrome_version.split('.')[0])
+                logger.info(f"🌐 Detected Chrome version: {chrome_version} (major: {chrome_major_version})")
+            except:
+                chrome_major_version = None
+                logger.warning("⚠️  Could not detect Chrome version, will auto-detect")
+            
+            # Find ARM64 ChromeDriver - try multiple locations
+            chromedriver_path = None
+            home_dir = str(Path.home())
+            possible_paths = [
+                f"{home_dir}/bin/chromedriver",    # User local bin (recommended)
+                "/opt/homebrew/bin/chromedriver",  # Homebrew ARM Mac
+                "/usr/local/bin/chromedriver",     # Homebrew Intel Mac
+                "/usr/bin/chromedriver"            # System
+            ]
+            
+            for path in possible_paths:
+                if Path(path).exists():
+                    chromedriver_path = path
+                    logger.info(f"✅ Found ChromeDriver at: {chromedriver_path}")
+                    break
+            
+            if not chromedriver_path:
+                logger.warning("⚠️  ChromeDriver not found in standard locations, will auto-download")
+            
+            # Create driver with ARM64 ChromeDriver
+            self.driver = uc.Chrome(
+                options=chrome_options,
+                version_main=chrome_major_version,  # Use detected version
+                driver_executable_path=chromedriver_path,  # Use system ChromeDriver if available
+                use_subprocess=False,  # Better for ARM Macs
+                headless=self.headless,
+                suppress_welcome=True
+            )
+            
+            # Set a reasonable page load timeout
+            self.driver.set_page_load_timeout(60)
+            
+            logger.info("✅ Undetected Chrome driver initialized successfully!")
+            logger.info("🎯 This driver is designed to bypass X.com bot detection")
             return True
+            
         except Exception as e:
-            logger.error(f"Failed to initialize Chrome driver: {e}")
+            error_msg = str(e)
+            logger.error(f"❌ Failed to initialize Chrome driver: {e}")
+            
+            if "Bad CPU type" in error_msg or "Errno 86" in error_msg:
+                logger.error("=" * 80)
+                logger.error("🚨 ERROR: Architecture mismatch (ARM64 vs x86_64)")
+                logger.error("")
+                logger.error("Fix for Apple Silicon Macs:")
+                logger.error("  1. Clear cache: rm -rf ~/Library/Application\\ Support/undetected_chromedriver/")
+                logger.error("  2. Install ARM ChromeDriver manually:")
+                logger.error("     brew install --cask chromedriver")
+                logger.error("  3. Or install using arch:")
+                logger.error("     arch -arm64 python3 -m pip install --force-reinstall undetected-chromedriver")
+                logger.error("  4. Try again: python3 twitter_agent_selenium.py")
+                logger.error("=" * 80)
+            elif "DevToolsActivePort" in error_msg or "timed out" in error_msg.lower():
+                logger.error("=" * 80)
+                logger.error("🚨 ERROR: Chrome initialization timeout or conflict!")
+                logger.error("")
+                logger.error("Quick fix:")
+                logger.error("  1. Run: ./kill_chrome.sh")
+                logger.error("  2. Wait 5 seconds")
+                logger.error("  3. Try again")
+                logger.error("=" * 80)
+            elif "session not created" in error_msg:
+                logger.error("=" * 80)
+                logger.error("🚨 ERROR: Could not create Chrome session")
+                logger.error("")
+                logger.error("Possible solutions:")
+                logger.error("  1. Close all Chrome: ./kill_chrome.sh")
+                logger.error("  2. Update Chrome to latest version")
+                logger.error("  3. Clear automation profile:")
+                logger.error("     rm -rf ~/.chrome_automation_profile")
+                logger.error("=" * 80)
+            
             return False
 
     def wait_for_element(self, by, selector, timeout=10):
@@ -2062,6 +2170,28 @@ class SeleniumTwitterAgent:
                 response = self.query_perplexity(tweet['content'])
                 if not response:
                     logger.error(f"✗ Failed to get response for tweet {tweet_num}")
+                    logger.info("🔄 Refreshing Perplexity page...")
+
+                    # Just refresh the current Perplexity page
+                    try:
+                        self.driver.refresh()
+                        time.sleep(3)  # Wait for page to load
+                        logger.info("✅ Successfully refreshed Perplexity page")
+
+                        logger.info("🔄 Retrying query with refreshed Perplexity page...")
+                        # Retry the query once with refreshed page
+                        response = self.query_perplexity(tweet['content'])
+                        if response:
+                            logger.info("✅ Successfully got response after Perplexity refresh")
+                        else:
+                            logger.error(f"✗ Failed to get response even after Perplexity refresh for tweet {tweet_num}")
+                            continue
+                    except Exception as e:
+                        logger.error(f"✗ Failed to refresh Perplexity page: {e}")
+                        continue
+
+                # Only continue if we have a valid response
+                if not response:
                     continue
                 
                 # Switch back to Twitter tab
