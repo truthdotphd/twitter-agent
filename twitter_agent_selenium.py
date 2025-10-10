@@ -801,6 +801,273 @@ class SeleniumTwitterAgent:
         except Exception as e:
             logger.error(f"Error during debugging: {e}")
 
+    def debug_perplexity_ui_elements(self):
+        """Debug helper to see what UI elements are available"""
+        try:
+            logger.info("🔍 DEBUG: Scanning Perplexity UI elements...")
+            
+            # Find all buttons with their text
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            visible_buttons = [b for b in buttons if b.is_displayed()]
+            logger.info(f"📊 Found {len(visible_buttons)} visible buttons:")
+            for i, btn in enumerate(visible_buttons[:20]):  # Show first 20
+                try:
+                    text = btn.text.strip()
+                    aria_label = btn.get_attribute('aria-label')
+                    class_name = btn.get_attribute('class')
+                    if text or aria_label:
+                        logger.info(f"   Button {i+1}: text='{text[:50]}', aria-label='{aria_label}', class='{class_name[:50] if class_name else ''}'")
+                except:
+                    pass
+            
+            # Find all divs with role
+            divs_with_role = self.driver.find_elements(By.CSS_SELECTOR, "div[role]")
+            logger.info(f"📊 Found {len(divs_with_role)} divs with role attribute")
+            
+            # Find elements with data-testid
+            testid_elements = self.driver.find_elements(By.CSS_SELECTOR, "[data-testid]")
+            logger.info(f"📊 Found {len(testid_elements)} elements with data-testid:")
+            for elem in testid_elements[:10]:  # Show first 10
+                try:
+                    testid = elem.get_attribute('data-testid')
+                    text = elem.text.strip()[:30]
+                    logger.info(f"   data-testid='{testid}', text='{text}'")
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"Debug failed: {e}")
+
+    def select_gpt5_and_sources(self) -> bool:
+        """Select GPT-5 Thinking model and configure sources"""
+        try:
+            logger.info("🤖 Configuring Perplexity: GPT-5 Thinking + Sources (Web, Academic, Social, Finance)")
+            
+            # Wait longer for the dynamic UI to fully load
+            logger.info("⏱️ Waiting for Perplexity UI to fully load...")
+            time.sleep(5)
+            
+            # Debug: Show what's available
+            if self.debug_mode:
+                self.debug_perplexity_ui_elements()
+            
+            # STEP 1: Click the MODEL selector button using explicit wait
+            logger.info("🔍 Step 1: Looking for model selector button...")
+            model_button = None
+            
+            try:
+                # The model button's aria-label shows the CURRENT model name, not "Choose a model"
+                # Look for buttons with aria-labels containing model names
+                logger.info("   Searching for model selector button (aria-label shows current model)...")
+                
+                # Known model keywords that appear in aria-labels
+                model_keywords = ['gpt', 'claude', 'gemini', 'sonar', 'thinking', 'grok', 'auto', 'o3']
+                
+                # Get all buttons
+                all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                
+                for btn in all_buttons:
+                    if not btn.is_displayed():
+                        continue
+                    
+                    aria_label = (btn.get_attribute('aria-label') or '').lower()
+                    
+                    # Check if this button's aria-label contains a model keyword
+                    # and is NOT one of the other control buttons
+                    if aria_label and any(keyword in aria_label for keyword in model_keywords):
+                        # Make sure it's not a submit button or other control
+                        if 'submit' not in aria_label and 'attach' not in aria_label and 'dictation' not in aria_label:
+                            model_button = btn
+                            logger.info(f"✅ Found model selector button with aria-label='{btn.get_attribute('aria-label')}'")
+                            break
+                
+            except Exception as search_error:
+                logger.warning(f"⚠️ Model button search failed: {search_error}")
+            
+            if model_button and model_button.is_displayed():
+                try:
+                    logger.info("🖱️ Clicking model selector...")
+                    model_button.click()
+                    time.sleep(3)
+                    
+                    # STEP 2: Look for GPT-5 Thinking option in the dropdown
+                    logger.info("🔍 Step 2: Looking for GPT-5 Thinking in dropdown...")
+                    
+                    # Wait for dropdown to appear
+                    time.sleep(2)
+                    
+                    # Look for menuitem divs containing model names
+                    menu_items = self.driver.find_elements(By.CSS_SELECTOR, "div[role='menuitem']")
+                    logger.info(f"📊 Found {len(menu_items)} menu items")
+                    
+                    found_model = False
+                    for item in menu_items:
+                        try:
+                            if not item.is_displayed():
+                                continue
+                            
+                            # Look for the span element containing the model name
+                            try:
+                                # Find all spans in this menuitem
+                                spans = item.find_elements(By.TAG_NAME, "span")
+                                model_name = ""
+                                
+                                for span in spans:
+                                    span_text = span.text.strip()
+                                    # Look for the main model name (skip badges like "new" or "max")
+                                    if span_text and span_text.lower() not in ['new', 'max']:
+                                        model_name = span_text
+                                        break
+                                
+                                # Check if this is GPT-5 Thinking
+                                if model_name.lower() == 'gpt-5 thinking':
+                                    logger.info(f"🎯 Found GPT-5 Thinking option: '{model_name}'")
+                                    
+                                    # Click the menuitem div (not the span)
+                                    try:
+                                        # First try clicking the parent div with cursor-pointer class
+                                        clickable_div = item.find_element(By.CSS_SELECTOR, "div.cursor-pointer")
+                                        clickable_div.click()
+                                        logger.info(f"✅ Selected model: GPT-5 Thinking")
+                                        time.sleep(2)
+                                        found_model = True
+                                        break
+                                    except:
+                                        # Fallback: click the menuitem itself
+                                        try:
+                                            item.click()
+                                            logger.info(f"✅ Selected model: GPT-5 Thinking (via menuitem)")
+                                            time.sleep(2)
+                                            found_model = True
+                                            break
+                                        except Exception as click_error:
+                                            logger.debug(f"Direct click failed: {click_error}")
+                                            # Try JavaScript click as last resort
+                                            try:
+                                                self.driver.execute_script("arguments[0].click();", item)
+                                                logger.info(f"✅ Selected model: GPT-5 Thinking (via JavaScript)")
+                                                time.sleep(2)
+                                                found_model = True
+                                                break
+                                            except:
+                                                logger.warning("Failed to click GPT-5 Thinking option")
+                                                continue
+                                        
+                            except Exception as span_error:
+                                logger.debug(f"Error finding span in menuitem: {span_error}")
+                                continue
+                                
+                        except Exception as e:
+                            logger.debug(f"Error checking menu item: {e}")
+                            continue
+                    
+                    if not found_model:
+                        logger.warning("⚠️ Could not find or click GPT-5 Thinking option")
+                        logger.info("💡 Please manually select GPT-5 Thinking")
+                        # Press ESC to close dropdown
+                        try:
+                            self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                            time.sleep(1)
+                        except:
+                            pass
+                                
+                except Exception as e:
+                    logger.warning(f"Error during model selection: {e}")
+            else:
+                logger.warning("⚠️ Model selector button not found or not visible")
+                logger.info("💡 You may need to manually select GPT-5 Thinking")
+            
+            # STEP 3: Configure sources using exact selector
+            time.sleep(2)
+            logger.info("🔍 Step 3: Looking for sources selector button...")
+            source_button = None
+            
+            try:
+                # Try the exact data-testid selector
+                source_button = self.driver.find_element(By.CSS_SELECTOR, 'button[data-testid="sources-switcher-button"]')
+                logger.info("✅ Found sources selector using data-testid='sources-switcher-button'")
+            except:
+                logger.warning("⚠️ Could not find sources button with exact selector")
+            
+            if source_button and source_button.is_displayed():
+                try:
+                    logger.info("🖱️ Clicking sources selector...")
+                    source_button.click()
+                    time.sleep(3)
+                    
+                    # STEP 4: Select the sources (skip Web as it's already enabled by default)
+                    # Use exact data-testid selectors from the HTML
+                    sources_to_enable = {
+                        'academic': 'source-toggle-scholar',
+                        'social': 'source-toggle-social',
+                        'finance': 'source-toggle-edgar'
+                    }
+                    
+                    logger.info(f"🔍 Step 4: Enabling sources: {', '.join(sources_to_enable.keys())}")
+                    logger.info("ℹ️  Skipping Web (already enabled by default)")
+                    
+                    enabled_sources = []
+                    
+                    for source_name, testid in sources_to_enable.items():
+                        try:
+                            # Find the menuitem with the specific data-testid
+                            source_elem = self.driver.find_element(By.CSS_SELECTOR, f'div[data-testid="{testid}"]')
+                            
+                            if source_elem and source_elem.is_displayed():
+                                # Check if it's already enabled by looking at the switch state
+                                try:
+                                    switch = source_elem.find_element(By.CSS_SELECTOR, 'button[role="switch"]')
+                                    aria_checked = switch.get_attribute('aria-checked')
+                                    
+                                    if aria_checked == 'true':
+                                        logger.info(f"ℹ️  {source_name.title()}: Already enabled")
+                                        enabled_sources.append(source_name)
+                                    else:
+                                        # Click to enable
+                                        logger.info(f"🎯 Clicking to enable: {source_name.title()}")
+                                        source_elem.click()
+                                        time.sleep(0.5)
+                                        logger.info(f"✅ Enabled source: {source_name.title()}")
+                                        enabled_sources.append(source_name)
+                                except Exception as switch_error:
+                                    # If we can't check the state, just click it
+                                    logger.debug(f"Could not check switch state for {source_name}, clicking anyway: {switch_error}")
+                                    source_elem.click()
+                                    time.sleep(0.5)
+                                    logger.info(f"✅ Clicked source: {source_name.title()}")
+                                    enabled_sources.append(source_name)
+                            else:
+                                logger.warning(f"⚠️ Source not found or not visible: {source_name}")
+                                
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not enable {source_name}: {e}")
+                            continue
+                    
+                    logger.info(f"📊 Configured sources: Web (default), {', '.join([s.title() for s in enabled_sources])}")
+                    
+                    # Close the source selector
+                    try:
+                        self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                        time.sleep(1)
+                        logger.info("✅ Closed sources selector")
+                    except:
+                        pass
+                        
+                except Exception as e:
+                    logger.warning(f"Error during source configuration: {e}")
+            else:
+                logger.warning("⚠️ Sources selector button not found or not visible")
+                logger.info("💡 You may need to manually select sources")
+            
+            logger.info("✅ Perplexity configuration completed")
+            logger.info("💡 Please verify the model and sources are correct")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error configuring Perplexity: {e}")
+            logger.warning("⚠️ Continuing anyway - you may need to configure manually")
+            return False
+
     def navigate_to_perplexity(self) -> bool:
         """Navigate to Perplexity.ai in a new tab with improved SPA loading detection"""
         try:
@@ -854,6 +1121,9 @@ class SeleniumTwitterAgent:
                 if not self.headless:
                     input("Press Enter after logging into Perplexity.ai...")
                     time.sleep(2)
+
+            # Configure GPT-5 Thinking and sources
+            self.select_gpt5_and_sources()
 
             # Try to find input field with multiple strategies
             input_field = self.find_perplexity_input_field()
@@ -1611,6 +1881,9 @@ class SeleniumTwitterAgent:
                         logger.info("⏱️ Waiting for fresh Perplexity page to load...")
                         time.sleep(5)
 
+                        # Configure GPT-5 Thinking and sources
+                        self.select_gpt5_and_sources()
+
                         # Reset chat response counter
                         self.current_chat_response_count = 0
                         logger.info("🔄 Reset chat response counter to 0")
@@ -2170,24 +2443,32 @@ class SeleniumTwitterAgent:
                 response = self.query_perplexity(tweet['content'])
                 if not response:
                     logger.error(f"✗ Failed to get response for tweet {tweet_num}")
-                    logger.info("🔄 Refreshing Perplexity page...")
+                    logger.info("🔄 Closing and reopening Perplexity with fresh chat session...")
 
-                    # Just refresh the current Perplexity page
+                    # Close and reopen Perplexity tab for complete reset
                     try:
-                        self.driver.refresh()
-                        time.sleep(3)  # Wait for page to load
-                        logger.info("✅ Successfully refreshed Perplexity page")
+                        if self.refresh_perplexity_with_new_chat():
+                            logger.info("✅ Successfully closed and reopened Perplexity with fresh chat")
 
-                        logger.info("🔄 Retrying query with refreshed Perplexity page...")
-                        # Retry the query once with refreshed page
-                        response = self.query_perplexity(tweet['content'])
-                        if response:
-                            logger.info("✅ Successfully got response after Perplexity refresh")
+                            # Switch to the fresh Perplexity tab
+                            if self.switch_to_perplexity_tab():
+                                logger.info("🔄 Retrying query with fresh Perplexity session...")
+
+                                # Retry the query once with fresh Perplexity
+                                response = self.query_perplexity(tweet['content'])
+                                if response:
+                                    logger.info("✅ Successfully got response after Perplexity refresh")
+                                else:
+                                    logger.error(f"✗ Failed to get response even after fresh Perplexity session for tweet {tweet_num}")
+                                    continue
+                            else:
+                                logger.error("✗ Failed to switch to fresh Perplexity tab")
+                                continue
                         else:
-                            logger.error(f"✗ Failed to get response even after Perplexity refresh for tweet {tweet_num}")
+                            logger.error("✗ Failed to refresh Perplexity with new chat")
                             continue
                     except Exception as e:
-                        logger.error(f"✗ Failed to refresh Perplexity page: {e}")
+                        logger.error(f"✗ Failed to refresh Perplexity: {e}")
                         continue
 
                 # Only continue if we have a valid response
