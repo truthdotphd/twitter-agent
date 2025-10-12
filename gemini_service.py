@@ -451,3 +451,4 @@ class GeminiService:
             logger.error(f"Error switching to Gemini tab: {e}")
             return False
 
+

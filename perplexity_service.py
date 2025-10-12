@@ -403,57 +403,177 @@ class PerplexityService:
             except Exception as e:
                 logger.warning(f"Could not clear input field: {e}")
             
-            # Type the prompt  
-            prompt = tweet_content[:500]  # Truncate to 500 chars
-            logger.info("Typing prompt...")
+            # Type the prompt
+            prompt = tweet_content  # Use full prompt
+            prompt_length = len(prompt)
+            logger.info(f"Typing prompt ({prompt_length} characters)...")
+
+            # Warn if prompt is extremely long
+            if prompt_length > 10000:
+                logger.warning(f"⚠️ Prompt is very long ({prompt_length} chars). This may take longer to process.")
+
+            # Check if prompt contains newlines
+            has_newlines = '\n' in prompt
+            if has_newlines:
+                logger.info(f"📝 Prompt contains {prompt.count(chr(10))} newline(s)")
+
             try:
                 input_field.click()
                 time.sleep(1)
-                
+
                 is_contenteditable = input_field.get_attribute("contenteditable") == "true"
-                
+
                 if is_contenteditable:
                     self.driver.execute_script("arguments[0].focus();", input_field)
                     time.sleep(0.5)
-                    
-                    self.driver.execute_script("arguments[0].textContent = arguments[1];", input_field, prompt)
+
+                    # For contenteditable divs: Convert \n to <br> tags and use innerHTML
+                    if has_newlines:
+                        # Convert newlines to <br> tags for HTML
+                        html_content = prompt.replace('\n', '<br>')
+                        self.driver.execute_script("arguments[0].innerHTML = arguments[1];", input_field, html_content)
+                        logger.info("✅ Set content with line breaks using innerHTML")
+                    else:
+                        # For single-line content, textContent is fine
+                        self.driver.execute_script("arguments[0].textContent = arguments[1];", input_field, prompt)
+
                     time.sleep(0.5)
-                    
+
+                    # Dispatch events to notify the app of changes
                     self.driver.execute_script("""
                         arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
                         arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
                     """, input_field)
                     time.sleep(1)
-                    
-                    final_content = self.driver.execute_script("return arguments[0].textContent;", input_field)
+
+                    # Verify content was set (check innerText which preserves newlines)
+                    final_content = self.driver.execute_script("return arguments[0].innerText || arguments[0].textContent;", input_field)
                     if final_content.strip():
-                        logger.info(f"✅ Successfully typed prompt: '{final_content[:50]}...'")
+                        preview = final_content.replace('\n', '\\n')[:80]
+                        logger.info(f"✅ Successfully typed prompt: '{preview}...'")
                     else:
-                        logger.warning("⚠️ Content may not have been set properly")
-                        input_field.send_keys(prompt)
-                        logger.info("Used fallback send_keys method")
+                        logger.warning("⚠️ Content may not have been set properly, trying send_keys fallback...")
+
+                        # Fallback: Use send_keys with proper newline handling
+                        if has_newlines:
+                            # Split by newlines and send each part with SHIFT+ENTER between
+                            lines = prompt.split('\n')
+                            for i, line in enumerate(lines):
+                                input_field.send_keys(line)
+                                if i < len(lines) - 1:  # Not the last line
+                                    input_field.send_keys(Keys.SHIFT, Keys.ENTER)
+                            logger.info("✅ Used send_keys with SHIFT+ENTER for line breaks")
+                        else:
+                            input_field.send_keys(prompt)
+                            logger.info("✅ Used send_keys fallback")
                 else:
-                    input_field.send_keys(prompt)
+                    # For textarea elements
+                    if has_newlines:
+                        # Split by newlines and send each part with SHIFT+ENTER between
+                        lines = prompt.split('\n')
+                        for i, line in enumerate(lines):
+                            input_field.send_keys(line)
+                            if i < len(lines) - 1:  # Not the last line
+                                input_field.send_keys(Keys.SHIFT, Keys.ENTER)
+                        logger.info("✅ Typed prompt with line breaks (SHIFT+ENTER)")
+                    else:
+                        input_field.send_keys(prompt)
+                        logger.info("✅ Successfully typed prompt")
                     time.sleep(2)
-                    logger.info("✅ Successfully typed prompt")
-                    
+
             except Exception as e:
                 logger.error(f"Failed to type prompt: {e}")
                 return None
             
-            # Submit
+            # Submit - Re-find input field to avoid stale element reference
             logger.info("Submitting query...")
             submitted = False
-            
-            try:
-                input_field.send_keys(Keys.RETURN)
-                logger.info("✅ Query submitted with RETURN key")
-                submitted = True
-            except Exception as e:
-                logger.warning(f"Failed to submit with RETURN key: {e}")
-            
+
+            # Try multiple submission methods with retries
+            submission_attempts = 0
+            max_submission_attempts = 3
+
+            while not submitted and submission_attempts < max_submission_attempts:
+                submission_attempts += 1
+
+                try:
+                    # Re-find the input field to avoid stale element reference
+                    logger.info(f"Submission attempt {submission_attempts}/{max_submission_attempts}: Re-finding input field...")
+                    fresh_input_field = self.find_input_field()
+
+                    if not fresh_input_field:
+                        logger.warning("Could not re-find input field")
+                        time.sleep(1)
+                        continue
+
+                    # Method 1: Use send_keys with RETURN
+                    try:
+                        fresh_input_field.send_keys(Keys.RETURN)
+                        logger.info("✅ Query submitted with RETURN key")
+                        submitted = True
+                        break
+                    except Exception as e:
+                        logger.warning(f"RETURN key submission failed: {e}")
+
+                    # Method 2: Try finding and clicking submit button
+                    if not submitted:
+                        logger.info("Trying to find submit button...")
+                        try:
+                            submit_selectors = [
+                                "button[type='submit']",
+                                "button[aria-label*='Submit']",
+                                "button[aria-label*='submit']",
+                                "button.submit-button",
+                                "button:has(svg)"  # Often submit buttons have arrow icons
+                            ]
+
+                            for selector in submit_selectors:
+                                try:
+                                    submit_buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                                    for btn in submit_buttons:
+                                        if btn.is_displayed() and btn.is_enabled():
+                                            btn.click()
+                                            logger.info(f"✅ Clicked submit button using: {selector}")
+                                            submitted = True
+                                            break
+                                except:
+                                    continue
+                                if submitted:
+                                    break
+                        except Exception as btn_e:
+                            logger.warning(f"Submit button method failed: {btn_e}")
+
+                    # Method 3: Use JavaScript to trigger Enter key event
+                    if not submitted:
+                        logger.info("Trying JavaScript submit method...")
+                        try:
+                            self.driver.execute_script("""
+                                var element = arguments[0];
+                                var event = new KeyboardEvent('keydown', {
+                                    key: 'Enter',
+                                    code: 'Enter',
+                                    keyCode: 13,
+                                    which: 13,
+                                    bubbles: true,
+                                    cancelable: true
+                                });
+                                element.dispatchEvent(event);
+                            """, fresh_input_field)
+                            logger.info("✅ Query submitted with JavaScript")
+                            submitted = True
+                            break
+                        except Exception as js_e:
+                            logger.warning(f"JavaScript submit failed: {js_e}")
+
+                except Exception as e:
+                    logger.warning(f"Submission attempt {submission_attempts} failed: {e}")
+
+                if not submitted and submission_attempts < max_submission_attempts:
+                    logger.info("Waiting before retry...")
+                    time.sleep(2)
+
             if not submitted:
-                logger.error("Failed to submit query")
+                logger.error("Failed to submit query after all attempts")
                 return None
             
             # Wait for response
@@ -599,4 +719,5 @@ class PerplexityService:
         except Exception as e:
             logger.error(f"Error switching to Perplexity tab: {e}")
             return False
+
 

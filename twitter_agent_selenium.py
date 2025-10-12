@@ -37,8 +37,24 @@ logger = logging.getLogger(__name__)
 
 class SeleniumTwitterAgent:
     def __init__(self):
-        self.base_prompt = "Rules: keep your response less than 500 characters. avoid all the followings in your response: avoid double dashes --, avoid double hyphens like --,avoid **,avoid references,avoid citations,avoid math formulas. Do NOT ask me anything further and only output the response and start the response with a full sentence that doesn't start with numbers. Write a short fact-based impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text in a human-like entertaining language: '{tweet_content}'"
+        self.base_prompt = """
+        Write a short fact-based impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text in a human-like entertaining language: 
+        # Content to write the response about:
 
+        '{tweet_content}'
+
+        # Rules for your response
+        1) keep your response less than 500 characters. 
+        2) avoid double dashes -- AND avoid double hyphens
+        3) avoid double stars **
+        4) avoid references and citations
+        5) avoid math formulas. 
+        6) Do NOT ask me anything further, and only output the response
+        7) start the response with a complete sentence
+        8) don't start the response with numbers. 
+        9) instead of using double or single dash/hyphen (-- or -) use semicolon comma colon (; , :)
+        10) keep the language and style similar to humans not AI
+        """
         # Configuration from environment
         self.ai_service = os.getenv('AI_SERVICE', 'perplexity').lower()
         self.delay_between_tweets = int(os.getenv('DELAY_BETWEEN_TWEETS', 5))
@@ -48,6 +64,23 @@ class SeleniumTwitterAgent:
         self.headless = os.getenv('HEADLESS', 'false').lower() == 'true'
         self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
         self.feed_type = os.getenv('TWITTER_FEED_TYPE', 'following').lower()
+        
+        # Validation and retry configuration
+        self.min_response_length = int(os.getenv('MIN_RESPONSE_LENGTH', 20))
+        self.min_tweet_length = int(os.getenv('MIN_TWEET_LENGTH', 30))
+        self.min_unique_word_ratio = float(os.getenv('MIN_UNIQUE_WORD_RATIO', 0.3))
+        self.min_words_for_repetition_check = int(os.getenv('MIN_WORDS_FOR_REPETITION_CHECK', 3))
+        self.max_ai_retries = int(os.getenv('MAX_AI_RETRIES', 3))
+        self.max_extraction_attempts = int(os.getenv('MAX_EXTRACTION_ATTEMPTS', 5))
+        self.no_tweets_threshold = int(os.getenv('NO_TWEETS_THRESHOLD', 3))
+        self.scroll_attempts = int(os.getenv('SCROLL_ATTEMPTS', 3))
+        self.save_frequency = int(os.getenv('SAVE_FREQUENCY', 5))
+        self.button_wait_timeout = int(os.getenv('BUTTON_WAIT_TIMEOUT', 10))
+        self.retry_wait_time = int(os.getenv('RETRY_WAIT_TIME', 2))
+        
+        # File and directory configuration
+        self.processed_tweets_filename = os.getenv('PROCESSED_TWEETS_FILE', 'processed_tweets.json')
+        self.chrome_profile_dir = os.getenv('CHROME_PROFILE_DIR', '.chrome_automation_profile_twitter')
 
         # Configure debug logging
         if self.debug_mode:
@@ -65,12 +98,22 @@ class SeleniumTwitterAgent:
         logger.info(f"   💬 Responses per chat: {self.ai_responses_per_chat}")
         logger.info(f"   👻 Headless mode: {self.headless}")
         logger.info(f"   📺 Twitter feed: {self.feed_type.title()}")
+        
+        if self.debug_mode:
+            logger.debug(f"⚙️ Advanced Configuration:")
+            logger.debug(f"   📏 Min response length: {self.min_response_length} chars")
+            logger.debug(f"   📏 Min tweet length: {self.min_tweet_length} chars")
+            logger.debug(f"   🔄 Max AI retries: {self.max_ai_retries}")
+            logger.debug(f"   🔄 Max extraction attempts: {self.max_extraction_attempts}")
+            logger.debug(f"   💾 Save frequency: every {self.save_frequency} tweets")
+            logger.debug(f"   📁 Processed tweets file: {self.processed_tweets_filename}")
+            logger.debug(f"   📁 Chrome profile dir: {self.chrome_profile_dir}")
 
         self.driver = None
         self.ai_service_instance = None
 
         # Persistent tweet tracking
-        self.processed_tweets_file = Path("processed_tweets.json")
+        self.processed_tweets_file = Path(self.processed_tweets_filename)
         self.processed_tweets = self._load_processed_tweets()
         self.current_username = None  # Will be detected after login
 
@@ -103,6 +146,73 @@ class SeleniumTwitterAgent:
     def _get_tweet_hash(self, tweet_content: str) -> str:
         """Generate a hash for tweet content to use as unique identifier"""
         return hashlib.md5(tweet_content.encode('utf-8')).hexdigest()
+    
+    def _is_error_response(self, response_text: str) -> bool:
+        """Check if AI response contains error messages or invalid content"""
+        if not response_text or len(response_text.strip()) < self.min_response_length:
+            logger.warning(f"⚠️ Response too short or empty (min: {self.min_response_length} chars)")
+            return True
+        
+        response_lower = response_text.lower().strip()
+        
+        # Common error patterns from AI assistants
+        error_patterns = [
+            "something went wrong",
+            "an error occurred",
+            "error occurred",
+            "try again",
+            "please try again",
+            "sorry, i couldn't",
+            "sorry, i can't",
+            "i apologize",
+            "i'm sorry",
+            "unable to process",
+            "unable to complete",
+            "request failed",
+            "connection error",
+            "timeout error",
+            "network error",
+            "service unavailable",
+            "temporarily unavailable",
+            "please refresh",
+            "please reload",
+            "internal error",
+            "system error",
+            "technical difficulty",
+            "experiencing issues",
+            "something's not right",
+            "oops",
+            "whoops",
+            "failed to load",
+            "failed to generate",
+            "could not generate",
+            "unable to generate",
+            "error generating",
+            "error processing",
+            "rate limit",
+            "quota exceeded",
+            "too many requests"
+        ]
+        
+        # Check for error patterns
+        for pattern in error_patterns:
+            if pattern in response_lower:
+                logger.warning(f"⚠️ Detected error pattern: '{pattern}' in response")
+                return True
+        
+        # Check if response is just error codes or numbers
+        if response_text.strip().isdigit():
+            logger.warning("⚠️ Response appears to be just numbers")
+            return True
+        
+        # Check if response is suspiciously repetitive (same word repeated)
+        words = response_text.split()
+        if len(words) > self.min_words_for_repetition_check and len(set(words)) < len(words) * self.min_unique_word_ratio:
+            logger.warning(f"⚠️ Response appears to be repetitive (unique words ratio: {len(set(words))/len(words):.2f}, threshold: {self.min_unique_word_ratio})")
+            return True
+        
+        logger.debug(f"✅ Response validation passed")
+        return False
 
     def setup_driver(self):
         """Set up Chrome driver with undetected_chromedriver for better reliability"""
@@ -116,22 +226,19 @@ class SeleniumTwitterAgent:
 
         # ALWAYS use a separate Chrome profile for automation (avoids conflicts)
         # This ensures login persistence across sessions
-        automation_profile_dir = Path.home() / ".chrome_automation_profile"
-        automation_profile_dir.mkdir(parents=True, exist_ok=True)
-        user_data_dir = str(automation_profile_dir.absolute())
+        # Matching the working pattern from stock_analyzer.py
+        automation_profile_dir = Path.home() / self.chrome_profile_dir
+        automation_profile_dir.mkdir(exist_ok=True)
+        user_data_dir = str(automation_profile_dir)
+        
+        logger.info(f"📁 Using persistent Chrome profile: {user_data_dir}")
         
         # Use a specific profile directory for this session
         profile_directory = os.getenv('CHROME_PROFILE_DIRECTORY', 'TwitterAgent')
-        profile_path = automation_profile_dir / profile_directory
-        profile_path.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"📁 Using persistent Chrome profile:")
-        logger.info(f"   User Data Dir: {user_data_dir}")
-        logger.info(f"   Profile: {profile_directory}")
-        logger.info(f"   Full Path: {profile_path}")
         
         # Check if profile exists and has data (indicates previous login)
-        profile_exists = (profile_path / "Preferences").exists()
+        profile_path = automation_profile_dir / profile_directory
+        profile_exists = profile_path.exists() and (profile_path / "Preferences").exists()
         if profile_exists:
             logger.info("✅ Found existing profile - logins should be remembered")
         else:
@@ -144,18 +251,19 @@ class SeleniumTwitterAgent:
         chrome_options.add_argument(f"--profile-directory={profile_directory}")
 
         # Additional options for stability and profile persistence
+        # Matching stock_analyzer.py pattern
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--no-first-run")
         chrome_options.add_argument("--no-default-browser-check")
         chrome_options.add_argument("--disable-popup-blocking")
+        chrome_options.add_argument("--no-sandbox")
         
-        # Configure preferences for login persistence (undetected_chromedriver compatible)
+        # Configure preferences for login persistence
+        # Note: Keep credentials ENABLED (unlike stock_analyzer) for login persistence
         chrome_options.add_experimental_option("prefs", {
-            "credentials_enable_service": True,  # Allow credential storage
-            "profile.password_manager_enabled": True,  # Enable password manager for login persistence
-            "profile.default_content_setting_values.notifications": 2,  # Disable notifications
-            "profile.exit_type": "Normal",  # Ensure clean exit to save session
-            "profile.exited_cleanly": True,  # Mark as clean exit
+            "credentials_enable_service": True,  # KEEP TRUE for login persistence
+            "profile.password_manager_enabled": True,  # KEEP TRUE for login persistence
+            "profile.default_content_setting_values.notifications": 2  # Disable notifications
         })
 
         try:
@@ -438,11 +546,10 @@ class SeleniumTwitterAgent:
 
             tweets = []
             attempts = 0
-            max_attempts = 5
 
-            while len(tweets) < self.max_tweets_per_session and attempts < max_attempts:
+            while len(tweets) < self.max_tweets_per_session and attempts < self.max_extraction_attempts:
                 attempts += 1
-                logger.info(f"Extraction attempt {attempts}/{max_attempts}")
+                logger.info(f"Extraction attempt {attempts}/{self.max_extraction_attempts}")
 
                 # Find tweet articles
                 try:
@@ -476,10 +583,10 @@ class SeleniumTwitterAgent:
                                 
                             tweet_text = tweet_text_element.text.strip()
 
-                            # Skip if too short (minimum 30 characters) or already processed
+                            # Skip if too short or already processed
                             tweet_hash = self._get_tweet_hash(tweet_text)
-                            if len(tweet_text) < 30 or tweet_hash in self.processed_tweets:
-                                logger.debug(f"Skipping tweet: length={len(tweet_text)} (min 30 chars), already_processed={tweet_hash in self.processed_tweets}")
+                            if len(tweet_text) < self.min_tweet_length or tweet_hash in self.processed_tweets:
+                                logger.debug(f"Skipping tweet: length={len(tweet_text)} (min {self.min_tweet_length} chars), already_processed={tweet_hash in self.processed_tweets}")
                                 continue
 
                             # Try to extract tweet ID from links
@@ -589,10 +696,10 @@ class SeleniumTwitterAgent:
                         
                     tweet_text = tweet_text_element.text.strip()
 
-                    # Skip if too short (minimum 30 characters) or already processed
+                    # Skip if too short or already processed
                     tweet_hash = self._get_tweet_hash(tweet_text)
-                    if len(tweet_text) < 30 or tweet_hash in self.processed_tweets:
-                        logger.debug(f"Skipping tweet: length={len(tweet_text)} (min 30 chars), already_processed={tweet_hash in self.processed_tweets}")
+                    if len(tweet_text) < self.min_tweet_length or tweet_hash in self.processed_tweets:
+                        logger.debug(f"Skipping tweet: length={len(tweet_text)} (min {self.min_tweet_length} chars), already_processed={tweet_hash in self.processed_tweets}")
                         continue
 
                     # Check if this is our own tweet/reply - skip it
@@ -1101,16 +1208,15 @@ class SeleniumTwitterAgent:
             
             # Wait for button to be enabled with better checking
             logger.info("Waiting for reply button to be enabled...")
-            max_wait = 10
             button_enabled = False
             
-            for i in range(max_wait):
+            for i in range(self.button_wait_timeout):
                 # Check if button is enabled
                 is_enabled = post_button.is_enabled()
                 is_disabled_attr = self.driver.execute_script("return arguments[0].disabled;", post_button)
                 aria_disabled = self.driver.execute_script("return arguments[0].getAttribute('aria-disabled');", post_button)
                 
-                logger.info(f"Button check ({i+1}/{max_wait}): enabled={is_enabled}, disabled_attr={is_disabled_attr}, aria_disabled={aria_disabled}")
+                logger.info(f"Button check ({i+1}/{self.button_wait_timeout}): enabled={is_enabled}, disabled_attr={is_disabled_attr}, aria_disabled={aria_disabled}")
                 
                 if is_enabled and not is_disabled_attr and aria_disabled != 'true':
                     button_enabled = True
@@ -1118,7 +1224,7 @@ class SeleniumTwitterAgent:
                     break
                 
                 # If not enabled, try triggering more events
-                if i < max_wait - 1:  # Don't trigger on last iteration
+                if i < self.button_wait_timeout - 1:  # Don't trigger on last iteration
                     logger.info("Button not enabled, triggering more input events...")
                     self.driver.execute_script("""
                         var textArea = document.querySelector('[data-testid="tweetTextarea_0"]') || 
@@ -1232,16 +1338,16 @@ class SeleniumTwitterAgent:
                 tweet = self.extract_single_tweet()
                 if not tweet:
                     no_tweets_count += 1
-                    logger.warning(f"No tweets found (attempt {no_tweets_count}/3)")
+                    logger.warning(f"No tweets found (attempt {no_tweets_count}/{self.no_tweets_threshold})")
                     
-                    if no_tweets_count >= 3:
-                        logger.info("🔄 No tweets found after 3 attempts - refreshing with fresh Twitter tab...")
+                    if no_tweets_count >= self.no_tweets_threshold:
+                        logger.info(f"🔄 No tweets found after {self.no_tweets_threshold} attempts - refreshing with fresh Twitter tab...")
 
                         # Close and reopen Twitter tab for completely fresh state
                         if self.refresh_twitter_with_new_tab():
                             # Scroll down to load more tweets
                             logger.info("Scrolling to load more tweets...")
-                            for i in range(3):
+                            for i in range(self.scroll_attempts):
                                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                                 time.sleep(2)
 
@@ -1275,39 +1381,52 @@ class SeleniumTwitterAgent:
                 
                 # Format prompt with base_prompt template
                 prompt = self.base_prompt.format(tweet_content=tweet['content'])
-                response = self.ai_service_instance.query(prompt)
-                if not response:
-                    logger.error(f"✗ Failed to get response for tweet {tweet_num}")
-                    logger.info(f"🔄 Closing and reopening {self.ai_service.upper()} with fresh chat session...")
-
-                    # Close and reopen AI service tab for complete reset
-                    try:
-                        if self.ai_service_instance.refresh():
-                            logger.info(f"✅ Successfully closed and reopened {self.ai_service.upper()} with fresh chat")
-
-                            # Switch to the fresh AI service tab
-                            if self.ai_service_instance.switch_to_tab():
-                                logger.info(f"🔄 Retrying query with fresh {self.ai_service.upper()} session...")
-
-                                # Retry the query once with fresh AI service
-                                response = self.ai_service_instance.query(prompt)
-                                if response:
-                                    logger.info(f"✅ Successfully got response after {self.ai_service.upper()} refresh")
-                                else:
-                                    logger.error(f"✗ Failed to get response even after fresh {self.ai_service.upper()} session for tweet {tweet_num}")
-                                    continue
+                
+                # Try to get a valid response with retry logic
+                response = None
+                retry_count = 0
+                
+                while retry_count < self.max_ai_retries:
+                    if retry_count > 0:
+                        logger.info(f"🔄 Retry attempt {retry_count}/{self.max_ai_retries-1} for tweet {tweet_num}")
+                    
+                    # Query AI service
+                    raw_response = self.ai_service_instance.query(prompt)
+                    
+                    # Check if response is valid (not an error message)
+                    if raw_response and not self._is_error_response(raw_response):
+                        response = raw_response
+                        logger.info(f"✅ Got valid response from {self.ai_service.upper()}")
+                        break
+                    elif raw_response:
+                        logger.warning(f"❌ Response contains error message, retrying... (attempt {retry_count + 1}/{self.max_ai_retries})")
+                        logger.debug(f"Error response preview: {raw_response[:100]}...")
+                    else:
+                        logger.warning(f"❌ No response received, retrying... (attempt {retry_count + 1}/{self.max_ai_retries})")
+                    
+                    retry_count += 1
+                    
+                    # If not the last retry, refresh AI service
+                    if retry_count < self.max_ai_retries:
+                        logger.info(f"🔄 Refreshing {self.ai_service.upper()} before retry...")
+                        try:
+                            if self.ai_service_instance.refresh():
+                                logger.info(f"✅ Successfully refreshed {self.ai_service.upper()}")
+                                # Switch to the fresh AI service tab
+                                if not self.ai_service_instance.switch_to_tab():
+                                    logger.error(f"✗ Failed to switch to fresh {self.ai_service.upper()} tab")
+                                    break
                             else:
-                                logger.error(f"✗ Failed to switch to fresh {self.ai_service.upper()} tab")
-                                continue
-                        else:
-                            logger.error(f"✗ Failed to refresh {self.ai_service.upper()} with new chat")
-                            continue
-                    except Exception as e:
-                        logger.error(f"✗ Failed to refresh {self.ai_service.upper()}: {e}")
-                        continue
-
-                # Only continue if we have a valid response
+                                logger.error(f"✗ Failed to refresh {self.ai_service.upper()}")
+                                break
+                        except Exception as e:
+                            logger.error(f"✗ Failed to refresh {self.ai_service.upper()}: {e}")
+                            break
+                        time.sleep(self.retry_wait_time)  # Brief pause before retry
+                
+                # Check if we got a valid response after all retries
                 if not response:
+                    logger.error(f"✗ Failed to get valid response after {self.max_ai_retries} attempts for tweet {tweet_num}")
                     continue
                 
                 # Switch back to Twitter tab
@@ -1351,8 +1470,8 @@ class SeleniumTwitterAgent:
                 
                 # Keep AI service tab open for next tweet (chat session)
                 
-                # Save processed tweets periodically (every 5 tweets)
-                if processed_count % 5 == 0:
+                # Save processed tweets periodically
+                if processed_count % self.save_frequency == 0:
                     logger.info("💾 Saving processed tweets...")
                     self._save_processed_tweets()
                 

@@ -203,3 +203,4 @@ AI_RESPONSES_PER_CHAT=2  # Replaces PERPLEXITY_RESPONSES_PER_CHAT
 
 Old environment variables still work but are deprecated.
 
+

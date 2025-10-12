@@ -611,10 +611,10 @@ class ChatGPTService:
             return None
     
     def _extract_response(self) -> Optional[str]:
-        """Extract response from ChatGPT page - get the LAST assistant message"""
+        """Extract response from ChatGPT page - ALWAYS get the LAST (most recent) assistant message"""
         try:
-            # Scroll to bottom
-            logger.info("Scrolling to bottom to find latest response...")
+            # Scroll to bottom to ensure we can see the latest response
+            logger.info("📜 Scrolling to bottom to find LATEST response...")
             try:
                 for i in range(3):
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -623,28 +623,32 @@ class ChatGPTService:
             except Exception as scroll_error:
                 logger.warning(f"Scroll error: {scroll_error}")
             
-            # Wait for content
+            # Wait for content to render
             time.sleep(2)
             
-            # Find all message elements
-            logger.info("🔍 Finding assistant messages...")
+            # STRATEGY: Find all assistant messages and pick the LAST one
+            logger.info("🔍 Finding all assistant messages to pick the LAST one...")
             try:
                 # ChatGPT uses data-message-author-role attribute
                 assistant_messages = self.driver.find_elements(By.CSS_SELECTOR, "[data-message-author-role='assistant']")
                 
-                if assistant_messages:
-                    logger.info(f"📊 Found {len(assistant_messages)} assistant messages")
+                if assistant_messages and len(assistant_messages) > 0:
+                    total_messages = len(assistant_messages)
+                    logger.info(f"📊 Found {total_messages} assistant message(s) in total")
                     
-                    # Get the LAST assistant message
+                    # CRITICAL: Always get the LAST assistant message (index -1)
                     last_message = assistant_messages[-1]
+                    logger.info(f"🎯 Picking message #{total_messages} (the LAST one)")
                     
-                    # Try to extract text from various possible containers
+                    # Try to extract text from various possible containers within the last message
                     text_selectors = [
-                        ".markdown",
-                        "[data-message-text]",
-                        ".text-message",
-                        "div.whitespace-pre-wrap",
-                        "div[class*='markdown']",
+                        ".markdown",                    # Most common container
+                        "[data-message-text]",          # Explicit text container
+                        ".text-message",                # Alternative text container
+                        "div.whitespace-pre-wrap",      # Formatted text
+                        "div[class*='markdown']",       # Wildcard markdown
+                        "div.text-base",                # Base text style
+                        "div[data-testid*='message']",  # Test ID pattern
                     ]
                     
                     for selector in text_selectors:
@@ -653,42 +657,76 @@ class ChatGPTService:
                             if elements:
                                 response_text = elements[0].text.strip()
                                 if len(response_text) > 20:
-                                    logger.info(f"✅ Found response using selector: {selector}")
-                                    logger.info(f"Response length: {len(response_text)} chars")
-                                    logger.info(f"Response preview: {response_text[:150]}...")
+                                    logger.info(f"✅ Extracted LAST response using selector: {selector}")
+                                    logger.info(f"📏 Response length: {len(response_text)} chars")
+                                    logger.info(f"📝 Response preview: {response_text[:100]}...")
                                     return response_text
                         except Exception as selector_error:
                             logger.debug(f"Selector {selector} failed: {selector_error}")
                             continue
                     
-                    # Fallback: Get text from message directly
+                    # Fallback: Get text from the last message element directly
                     response_text = last_message.text.strip()
                     if len(response_text) > 20:
-                        logger.info(f"✅ Found response from assistant message directly")
-                        logger.info(f"Response length: {len(response_text)} chars")
+                        logger.info(f"✅ Extracted LAST response from message element directly")
+                        logger.info(f"📏 Response length: {len(response_text)} chars")
+                        logger.info(f"📝 Response preview: {response_text[:100]}...")
                         return response_text
+                    else:
+                        logger.warning(f"⚠️ Last message text too short ({len(response_text)} chars): {response_text}")
                 else:
-                    logger.warning("⚠️ No assistant messages found")
+                    logger.warning("⚠️ No assistant messages found with data-message-author-role='assistant'")
                     
             except Exception as e:
                 logger.error(f"Error finding assistant messages: {e}")
             
-            # Fallback: Try to find any response container
-            logger.info("🔄 Trying fallback method...")
+            # FALLBACK STRATEGY: Try to find any markdown elements and pick the LAST one
+            logger.info("🔄 Trying fallback: searching for markdown elements...")
             try:
                 all_markdown = self.driver.find_elements(By.CSS_SELECTOR, ".markdown")
                 if all_markdown:
-                    logger.info(f"📊 Found {len(all_markdown)} markdown elements")
+                    total_markdown = len(all_markdown)
+                    logger.info(f"📊 Found {total_markdown} markdown elements")
                     
-                    # Get the LAST one
-                    for markdown in reversed(all_markdown):
-                        if markdown.is_displayed():
-                            text = markdown.text.strip()
-                            if len(text) > 20:
-                                logger.info(f"✅ Found response using fallback")
-                                return text
+                    # Iterate from LAST to first
+                    for idx, markdown in enumerate(reversed(all_markdown)):
+                        position = total_markdown - idx  # Calculate position for logging
+                        try:
+                            if markdown.is_displayed():
+                                text = markdown.text.strip()
+                                if len(text) > 20:
+                                    logger.info(f"✅ Extracted response from markdown #{position} (LAST visible)")
+                                    logger.info(f"📏 Response length: {len(text)} chars")
+                                    logger.info(f"📝 Response preview: {text[:100]}...")
+                                    return text
+                                else:
+                                    logger.debug(f"Markdown #{position} too short: {len(text)} chars")
+                        except Exception as markdown_error:
+                            logger.debug(f"Error with markdown #{position}: {markdown_error}")
+                            continue
             except Exception as e:
                 logger.debug(f"Fallback failed: {e}")
+            
+            # LAST RESORT: Try any visible text container
+            logger.info("🔄 Last resort: searching for any text containers...")
+            try:
+                text_containers = self.driver.find_elements(By.CSS_SELECTOR, "div.text-base, div.whitespace-pre-wrap, div[class*='text']")
+                if text_containers:
+                    logger.info(f"📊 Found {len(text_containers)} text containers")
+                    
+                    # Check from last to first
+                    for container in reversed(text_containers):
+                        try:
+                            if container.is_displayed():
+                                text = container.text.strip()
+                                if len(text) > 20:
+                                    logger.info(f"✅ Extracted response from text container (last resort)")
+                                    logger.info(f"📏 Response length: {len(text)} chars")
+                                    return text
+                        except:
+                            continue
+            except Exception as e:
+                logger.debug(f"Last resort failed: {e}")
             
             logger.warning("❌ No valid response found from ChatGPT")
             return None
