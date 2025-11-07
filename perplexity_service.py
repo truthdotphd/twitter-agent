@@ -71,15 +71,8 @@ class PerplexityService:
             
             # Additional wait for elements to be interactive
             time.sleep(2)
-            
-            # Check login status
-            if not self.check_login_status():
-                logger.warning("⚠️  May not be logged into Perplexity.ai")
-                logger.warning("Please log into Perplexity.ai in this browser window")
-                input("Press Enter after logging into Perplexity.ai...")
-                time.sleep(2)
-            
-            # Configure GPT-5 Thinking and sources
+
+            # Configure GPT-5 (with reasoning) and sources
             self.select_gpt5_and_sources()
             
             # Try to find input field
@@ -94,30 +87,7 @@ class PerplexityService:
         except Exception as e:
             logger.error(f"Error navigating to Perplexity.ai: {e}")
             return False
-    
-    def check_login_status(self) -> bool:
-        """Check if we're logged into Perplexity.ai"""
-        try:
-            logger.info("Checking Perplexity.ai login status...")
-            
-            page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
-            
-            # Check for logged-in indicators
-            logged_in_indicators = ["pro", "profile", "settings", "upgrade"]
-            
-            logged_in_found = False
-            for indicator in logged_in_indicators:
-                if indicator in page_text:
-                    logger.info(f"Found logged-in indicator: '{indicator}'")
-                    logged_in_found = True
-                    break
-            
-            return logged_in_found
-            
-        except Exception as e:
-            logger.warning(f"Could not determine login status: {e}")
-            return True  # Assume logged in if we can't determine
-    
+
     def debug_ui_elements(self):
         """Debug helper to see what UI elements are available"""
         try:
@@ -141,9 +111,9 @@ class PerplexityService:
             logger.error(f"Debug failed: {e}")
     
     def select_gpt5_and_sources(self) -> bool:
-        """Select GPT-5 Thinking model and configure sources"""
+        """Select GPT-5 with reasoning and configure sources"""
         try:
-            logger.info("🤖 Configuring Perplexity: GPT-5 Thinking + Sources (Web, Academic, Social, Finance)")
+            logger.info("🤖 Configuring Perplexity: GPT-5 (with reasoning) + Sources (Web, Academic, Social, Finance)")
             
             # Wait for UI to load
             logger.info("⏱️ Waiting for Perplexity UI to fully load...")
@@ -181,68 +151,165 @@ class PerplexityService:
                     logger.info("🖱️ Clicking model selector...")
                     model_button.click()
                     time.sleep(3)
-                    
-                    # Look for GPT-5 Thinking
-                    logger.info("🔍 Step 2: Looking for GPT-5 Thinking in dropdown...")
+
+                    # Look for GPT-5
+                    logger.info("🔍 Step 2: Looking for GPT-5 in dropdown...")
                     time.sleep(2)
-                    
+
                     menu_items = self.driver.find_elements(By.CSS_SELECTOR, "div[role='menuitem']")
                     logger.info(f"📊 Found {len(menu_items)} menu items")
-                    
+
                     found_model = False
                     for item in menu_items:
                         try:
                             if not item.is_displayed():
                                 continue
-                            
+
                             spans = item.find_elements(By.TAG_NAME, "span")
                             model_name = ""
-                            
+
                             for span in spans:
                                 span_text = span.text.strip()
                                 if span_text and span_text.lower() not in ['new', 'max']:
                                     model_name = span_text
                                     break
-                            
-                            if model_name.lower() == 'gpt-5 thinking':
-                                logger.info(f"🎯 Found GPT-5 Thinking option")
-                                
+
+                            if model_name.lower() == 'gpt-5':
+                                logger.info(f"🎯 Found GPT-5 option")
+
                                 try:
                                     clickable_div = item.find_element(By.CSS_SELECTOR, "div.cursor-pointer")
                                     clickable_div.click()
-                                    logger.info(f"✅ Selected model: GPT-5 Thinking")
+                                    logger.info(f"✅ Selected model: GPT-5")
                                     time.sleep(2)
                                     found_model = True
                                     break
                                 except:
                                     try:
                                         item.click()
-                                        logger.info(f"✅ Selected model: GPT-5 Thinking (via menuitem)")
+                                        logger.info(f"✅ Selected model: GPT-5 (via menuitem)")
                                         time.sleep(2)
                                         found_model = True
                                         break
                                     except:
                                         try:
                                             self.driver.execute_script("arguments[0].click();", item)
-                                            logger.info(f"✅ Selected model: GPT-5 Thinking (via JavaScript)")
+                                            logger.info(f"✅ Selected model: GPT-5 (via JavaScript)")
                                             time.sleep(2)
                                             found_model = True
                                             break
                                         except:
-                                            logger.warning("Failed to click GPT-5 Thinking option")
+                                            logger.warning("Failed to click GPT-5 option")
                         except Exception as e:
                             logger.debug(f"Error checking menu item: {e}")
                             continue
-                    
+
                     if not found_model:
-                        logger.warning("⚠️ Could not find or click GPT-5 Thinking option")
-                        logger.info("💡 Please manually select GPT-5 Thinking")
+                        logger.warning("⚠️ Could not find or click GPT-5 option")
+                        logger.info("💡 Please manually select GPT-5")
                         try:
                             self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
                             time.sleep(1)
                         except:
                             pass
-                            
+                    else:
+                        # STEP 2.5: Enable "With reasoning" toggle for GPT-5
+                        logger.info("🔍 Step 2.5: Looking for 'With reasoning' toggle...")
+                        time.sleep(2)
+
+                        try:
+                            # Strategy: Find "With reasoning" text, navigate up to menuitem, find switch within
+                            reasoning_enabled = False
+
+                            # Get all menu items (in case we need to search through them)
+                            all_menuitems = self.driver.find_elements(By.CSS_SELECTOR, "div[role='menuitem']")
+                            logger.info(f"📊 Found {len(all_menuitems)} menu items to search")
+
+                            for menuitem in all_menuitems:
+                                if not menuitem.is_displayed():
+                                    continue
+
+                                # Check if this menuitem contains "With reasoning" text
+                                menuitem_text = menuitem.text.lower()
+
+                                if 'with reasoning' in menuitem_text:
+                                    logger.info(f"🎯 Found menuitem with 'With reasoning' text")
+
+                                    try:
+                                        # Find the switch within this menuitem
+                                        switch = menuitem.find_element(By.CSS_SELECTOR, 'button[role="switch"]')
+
+                                        if switch and switch.is_displayed():
+                                            aria_checked = switch.get_attribute('aria-checked')
+                                            logger.info(f"   Switch state: aria-checked='{aria_checked}'")
+
+                                            if aria_checked == 'true':
+                                                logger.info("ℹ️  'With reasoning' is already enabled")
+                                                reasoning_enabled = True
+                                                break
+                                            else:
+                                                logger.info("🎯 Enabling 'With reasoning' toggle...")
+
+                                                # Try multiple click methods
+                                                clicked = False
+
+                                                # Method 1: Click the switch directly
+                                                try:
+                                                    switch.click()
+                                                    clicked = True
+                                                    logger.info("✅ Clicked switch directly")
+                                                except Exception as click_err:
+                                                    logger.warning(f"Direct click failed: {click_err}")
+
+                                                # Method 2: JavaScript click on switch
+                                                if not clicked:
+                                                    try:
+                                                        self.driver.execute_script("arguments[0].click();", switch)
+                                                        clicked = True
+                                                        logger.info("✅ Clicked switch with JavaScript")
+                                                    except Exception as js_err:
+                                                        logger.warning(f"JavaScript click failed: {js_err}")
+
+                                                # Method 3: Click the entire menuitem row (often the whole row is clickable)
+                                                if not clicked:
+                                                    try:
+                                                        # Find the cursor-pointer div (the clickable row)
+                                                        clickable_div = menuitem.find_element(By.CSS_SELECTOR, "div.cursor-pointer")
+                                                        clickable_div.click()
+                                                        clicked = True
+                                                        logger.info("✅ Clicked entire menuitem row")
+                                                    except Exception as row_err:
+                                                        logger.warning(f"Row click failed: {row_err}")
+
+                                                if clicked:
+                                                    time.sleep(1)
+                                                    logger.info("✅ Enabled 'With reasoning' for GPT-5")
+                                                    reasoning_enabled = True
+                                                    break
+                                                else:
+                                                    logger.warning("⚠️ All click methods failed for 'With reasoning' toggle")
+                                    except NoSuchElementException:
+                                        logger.debug("No switch found in this menuitem")
+                                        continue
+                                    except Exception as e:
+                                        logger.warning(f"Error processing menuitem: {e}")
+                                        continue
+
+                            if not reasoning_enabled:
+                                logger.warning("⚠️ Could not find or enable 'With reasoning' toggle")
+                                logger.info("💡 Please manually enable 'With reasoning' if desired")
+
+                        except Exception as e:
+                            logger.warning(f"Error enabling 'With reasoning': {e}")
+
+                        # Close model selector
+                        try:
+                            self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                            time.sleep(1)
+                            logger.info("✅ Closed model selector")
+                        except:
+                            pass
+
                 except Exception as e:
                     logger.warning(f"Error during model selection: {e}")
             else:
@@ -252,66 +319,140 @@ class PerplexityService:
             time.sleep(2)
             logger.info("🔍 Step 3: Looking for sources selector button...")
             source_button = None
-            
+
             try:
                 source_button = self.driver.find_element(By.CSS_SELECTOR, 'button[data-testid="sources-switcher-button"]')
                 logger.info("✅ Found sources selector")
             except:
                 logger.warning("⚠️ Could not find sources button")
-            
+
             if source_button and source_button.is_displayed():
                 try:
                     logger.info("🖱️ Clicking sources selector...")
                     source_button.click()
                     time.sleep(3)
-                    
-                    # Enable sources
-                    sources_to_enable = {
-                        'academic': 'source-toggle-scholar',
-                        'social': 'source-toggle-social',
-                        'finance': 'source-toggle-edgar'
-                    }
-                    
-                    logger.info(f"🔍 Step 4: Enabling sources: {', '.join(sources_to_enable.keys())}")
+
+                    # Sources we want to enable (by display text)
+                    sources_to_enable = ['Social'] # ['Academic', 'Social', 'Finance']
+
+                    logger.info(f"🔍 Step 4: Enabling sources: {', '.join(sources_to_enable)}")
                     enabled_sources = []
-                    
-                    for source_name, testid in sources_to_enable.items():
-                        try:
-                            source_elem = self.driver.find_element(By.CSS_SELECTOR, f'div[data-testid="{testid}"]')
-                            
-                            if source_elem and source_elem.is_displayed():
+
+                    # NEW STRATEGY: Find sources by text content instead of test IDs
+                    # Get all visible elements that could be source toggles
+                    try:
+                        # Look for buttons with role="switch" (the actual toggle switches)
+                        all_switches = self.driver.find_elements(By.CSS_SELECTOR, 'button[role="switch"]')
+                        logger.info(f"📊 Found {len(all_switches)} toggle switches")
+
+                        # Also get all text elements to find source names
+                        for source_name in sources_to_enable:
+                            found = False
+
+                            # Method 1: Find by exact text match
+                            try:
+                                # Find elements containing the source name
+                                xpath = f"//*[contains(text(), '{source_name}')]"
+                                text_elements = self.driver.find_elements(By.XPATH, xpath)
+
+                                for text_elem in text_elements:
+                                    if not text_elem.is_displayed():
+                                        continue
+
+                                    # Try to find a switch near this text element
+                                    try:
+                                        # Look for switch in parent or grandparent
+                                        parent = text_elem.find_element(By.XPATH, "./..")
+                                        switch = parent.find_element(By.CSS_SELECTOR, 'button[role="switch"]')
+
+                                        # Check if already enabled
+                                        aria_checked = switch.get_attribute('aria-checked')
+
+                                        if aria_checked == 'true':
+                                            logger.info(f"ℹ️  {source_name}: Already enabled")
+                                            enabled_sources.append(source_name)
+                                            found = True
+                                            break
+                                        else:
+                                            logger.info(f"🎯 Clicking to enable: {source_name}")
+                                            switch.click()
+                                            time.sleep(0.5)
+                                            logger.info(f"✅ Enabled source: {source_name}")
+                                            enabled_sources.append(source_name)
+                                            found = True
+                                            break
+                                    except:
+                                        # Try grandparent
+                                        try:
+                                            grandparent = text_elem.find_element(By.XPATH, "./../..")
+                                            switch = grandparent.find_element(By.CSS_SELECTOR, 'button[role="switch"]')
+
+                                            aria_checked = switch.get_attribute('aria-checked')
+
+                                            if aria_checked == 'true':
+                                                logger.info(f"ℹ️  {source_name}: Already enabled")
+                                                enabled_sources.append(source_name)
+                                                found = True
+                                                break
+                                            else:
+                                                logger.info(f"🎯 Clicking to enable: {source_name}")
+                                                switch.click()
+                                                time.sleep(0.5)
+                                                logger.info(f"✅ Enabled source: {source_name}")
+                                                enabled_sources.append(source_name)
+                                                found = True
+                                                break
+                                        except:
+                                            continue
+                            except Exception as e:
+                                logger.debug(f"Text-based search failed for {source_name}: {e}")
+
+                            # Method 2: Try clicking the text element itself (if it's clickable)
+                            if not found:
                                 try:
-                                    switch = source_elem.find_element(By.CSS_SELECTOR, 'button[role="switch"]')
-                                    aria_checked = switch.get_attribute('aria-checked')
-                                    
-                                    if aria_checked == 'true':
-                                        logger.info(f"ℹ️  {source_name.title()}: Already enabled")
-                                        enabled_sources.append(source_name)
-                                    else:
-                                        logger.info(f"🎯 Clicking to enable: {source_name.title()}")
-                                        source_elem.click()
-                                        time.sleep(0.5)
-                                        logger.info(f"✅ Enabled source: {source_name.title()}")
-                                        enabled_sources.append(source_name)
-                                except:
-                                    source_elem.click()
-                                    time.sleep(0.5)
-                                    logger.info(f"✅ Clicked source: {source_name.title()}")
-                                    enabled_sources.append(source_name)
-                        except Exception as e:
-                            logger.warning(f"⚠️ Could not enable {source_name}: {e}")
-                    
-                    logger.info(f"📊 Configured sources: Web (default), {', '.join([s.title() for s in enabled_sources])}")
-                    
+                                    xpath = f"//*[contains(text(), '{source_name}')]"
+                                    text_elements = self.driver.find_elements(By.XPATH, xpath)
+
+                                    for text_elem in text_elements:
+                                        if text_elem.is_displayed():
+                                            try:
+                                                # Try to click the containing div
+                                                clickable_parent = text_elem.find_element(By.XPATH, "./..")
+                                                clickable_parent.click()
+                                                time.sleep(0.5)
+                                                logger.info(f"✅ Clicked {source_name} (via parent element)")
+                                                enabled_sources.append(source_name)
+                                                found = True
+                                                break
+                                            except:
+                                                continue
+                                except Exception as e:
+                                    logger.debug(f"Parent click failed for {source_name}: {e}")
+
+                            if not found:
+                                logger.warning(f"⚠️ Could not find or enable {source_name}")
+
+                    except Exception as e:
+                        logger.warning(f"Error during source toggle search: {e}")
+
+                    if enabled_sources:
+                        logger.info(f"📊 Configured sources: Web (default), {', '.join(enabled_sources)}")
+                    else:
+                        logger.warning("⚠️ No sources were enabled automatically")
+                        logger.info("💡 Please manually enable Academic, Social, and Finance sources")
+
                     # Close selector
+                    time.sleep(1)
                     try:
                         self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
                         time.sleep(1)
+                        logger.info("✅ Closed sources selector")
                     except:
                         pass
-                        
+
                 except Exception as e:
                     logger.warning(f"Error during source configuration: {e}")
+                    logger.info("💡 You may need to manually select sources")
             
             logger.info("✅ Perplexity configuration completed")
             return True

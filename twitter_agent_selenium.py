@@ -38,14 +38,11 @@ logger = logging.getLogger(__name__)
 class SeleniumTwitterAgent:
     def __init__(self):
         self.base_prompt = """
-        Write a short fact-based impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text in a human-like entertaining language: 
-        # Content to write the response about:
-
-        '{tweet_content}'
-
+        You are a funny commentator.
         # Rules for your response
-        1) keep your response less than 500 characters. 
-        2) avoid double dashes -- AND avoid double hyphens
+        0) don't start your response with "here is a twist", or "here is a fun twist", etc.
+        1) keep your response LESS than 400 characters Less than 5 sentences. 
+        2) avoid double dashes -- AND avoid double hyphens AND avoid colons : AND avoid semicolons ;
         3) avoid double stars **
         4) avoid references and citations
         5) avoid math formulas. 
@@ -54,6 +51,26 @@ class SeleniumTwitterAgent:
         8) don't start the response with numbers. 
         9) instead of using double or single dash/hyphen (-- or -) use semicolon comma colon (; , :)
         10) keep the language and style similar to humans not AI
+        11) do not cite any reference in your response
+        12) make the style, format, and wording of your response different from the previous responses in the chat.
+        13) make sure the language is close to a typical human 
+        14) sometimes use questions to make an engaging post
+        15) keep it short strictly less than 400 characters and 5 sentences.
+        16) write in full sentences.
+        17) don't add ANY sources or references or citations
+        18) keep the language engaging and fun
+        19) YOUR RESPONSE MUST BE LESS THAN 400 CHARACTERS and LESS than 5 sentences!!
+        20) I DON'T WANT TO SEE ANY REFERNCES or SOURCES or CITED LINKS IN YOUR RESPONSE!!
+
+        Write a short fact-based impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text in a human-like entertaining language: 
+        # Content to write the response about:
+
+        '{tweet_content}'
+
+        STRICT rules:
+        1) DON'T WANT TO SEE ANY REFERNCES or SOURCES or CITED LINKS IN YOUR RESPONSE!! JUST WORDS WITH NO LINKS!
+        2) YOUR RESPONSES ARE LENGHTY! Your response MUST be LESS than 5 sentences AND LESS than 400 english characters!! 
+        3) you are still showing links to refeernces in your response, DON'T DO IT! I don't want to see the references in your response. just a plaintext without references.
         """
         # Configuration from environment
         self.ai_service = os.getenv('AI_SERVICE', 'perplexity').lower()
@@ -1109,9 +1126,83 @@ class SeleniumTwitterAgent:
             # Use realistic typing that mimics human behavior to enable reply button
             try:
                 logger.info("Typing response with realistic keyboard simulation...")
-                
+
+                # Step 0: Dismiss any overlays/modals/dropdowns that might block clicks
+                logger.info("Dismissing any overlays, modals, or dropdowns...")
+                try:
+                    # Method 1: Press ESC key to dismiss any modals/dropdowns
+                    self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                    time.sleep(0.5)
+                    logger.info("✅ Pressed ESC to dismiss overlays")
+                except:
+                    pass
+
+                try:
+                    # Method 2: Click outside the compose area to dismiss dropdowns
+                    self.driver.execute_script("document.body.click();")
+                    time.sleep(0.3)
+                    logger.info("✅ Clicked body to dismiss dropdowns")
+                except:
+                    pass
+
+                try:
+                    # Method 3: Remove autocomplete/typeahead dropdowns via JavaScript
+                    self.driver.execute_script("""
+                        var dropdowns = document.querySelectorAll('[id*="typeahead"], [id*="dropdown"], [role="listbox"]');
+                        dropdowns.forEach(function(dropdown) {
+                            if (dropdown && dropdown.style) {
+                                dropdown.style.display = 'none';
+                            }
+                        });
+                    """)
+                    logger.info("✅ Hid autocomplete dropdowns")
+                except:
+                    pass
+
                 # Step 1: Focus and clear the compose area
-                compose_element.click()
+                logger.info("Focusing compose area...")
+
+                # Scroll element into view first
+                try:
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", compose_element)
+                    time.sleep(0.5)
+                    logger.info("✅ Scrolled element into view")
+                except:
+                    pass
+
+                # Try multiple click methods to handle overlay issues
+                clicked = False
+
+                # Method 1: Standard click
+                try:
+                    compose_element.click()
+                    clicked = True
+                    logger.info("✅ Clicked compose area (standard)")
+                except Exception as click_err:
+                    logger.warning(f"Standard click failed: {click_err}")
+
+                # Method 2: JavaScript click if standard failed
+                if not clicked:
+                    try:
+                        self.driver.execute_script("arguments[0].click();", compose_element)
+                        clicked = True
+                        logger.info("✅ Clicked compose area (JavaScript)")
+                    except Exception as js_click_err:
+                        logger.warning(f"JavaScript click failed: {js_click_err}")
+
+                # Method 3: Focus via JavaScript if clicks failed
+                if not clicked:
+                    try:
+                        self.driver.execute_script("arguments[0].focus();", compose_element)
+                        clicked = True
+                        logger.info("✅ Focused compose area (JavaScript focus)")
+                    except Exception as focus_err:
+                        logger.warning(f"JavaScript focus failed: {focus_err}")
+
+                if not clicked:
+                    logger.error("❌ Could not click or focus compose area")
+                    return False
+
                 time.sleep(0.5)
                 
                 # Clear existing content
