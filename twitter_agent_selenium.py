@@ -41,7 +41,7 @@ class SeleniumTwitterAgent:
         You are a funny commentator talking in the style of a casually speaking comedian.
         # Rules for your response
         0) don't start your response with "here is a twist", or "here is a fun twist", etc.
-        1) keep your response LESS than 400 characters Less than 5 sentences. 
+        1) keep your response LESS than 200 characters Less than 2 sentences. 
         2) avoid double dashes -- AND avoid double hyphens AND avoid colons : AND avoid semicolons ;
         3) avoid double stars **
         4) avoid references and citations
@@ -55,14 +55,15 @@ class SeleniumTwitterAgent:
         12) make the style, format, and wording of your response different from the previous responses in the chat.
         13) make sure the language is close to a typical human 
         14) sometimes use questions to make an engaging post
-        15) keep it short strictly less than 400 characters and 5 sentences.
+        15) keep it short strictly less than 200 characters and 2 sentences.
         16) write in full sentences.
         17) don't add ANY sources or references or citations
         18) keep the language engaging and fun
-        19) YOUR RESPONSE MUST BE LESS THAN 400 CHARACTERS and LESS than 5 sentences!!
+        19) YOUR RESPONSE MUST BE LESS THAN 200 CHARACTERS and LESS than 2 sentences!!
         20) I DON'T WANT TO SEE ANY REFERNCES or SOURCES or CITED LINKS IN YOUR RESPONSE!!
         21) DO NOT add stock price changes after the company names or ticker symbols
         22) I DO NOT WANT ANY stock price information in the response
+        23) DO NOT ask ANY questions and only output the final response
         Write a short fact-based impactful, entertaining, fun and amusing response teaching a fresh, complementary insight about the following text in a human-like entertaining language: 
         # Content to write the response about:
 
@@ -70,8 +71,11 @@ class SeleniumTwitterAgent:
 
         STRICT rules:
         1) DON'T WANT TO SEE ANY REFERNCES or SOURCES or CITED LINKS IN YOUR RESPONSE!! JUST WORDS WITH NO LINKS!
-        2) YOUR RESPONSES ARE LENGHTY! Your response MUST be LESS than 5 sentences AND LESS than 400 english characters!! 
+        2) YOUR RESPONSES ARE LENGHTY! Your response MUST be LESS than 2 sentences AND LESS than 200 english characters!! 
         3) you are still showing links to refeernces in your response, DON'T DO IT! I don't want to see the references in your response. just a plaintext without references.
+        4) Don't add price changes after the stock tickers
+        5) Don't ask any question and only output the final response
+        6) Do NOT ADD ANY REFERENCES or SOURCES or CITED LINKS or FINANCE PRICE CHANGES IN YOUR RESPONSE!! JUST WORDS WITH NO LINKS OR PRICE DATA!
         """
         # Configuration from environment
         self.ai_service = os.getenv('AI_SERVICE', 'perplexity').lower()
@@ -232,6 +236,41 @@ class SeleniumTwitterAgent:
         logger.debug(f"✅ Response validation passed")
         return False
 
+    def _kill_existing_chrome_profile_processes(self, profile_dir: str):
+        """Kill any Chrome processes using our automation profile to avoid conflicts"""
+        import subprocess
+        try:
+            # Find Chrome processes using our profile
+            result = subprocess.run(
+                ['pgrep', '-f', profile_dir],
+                capture_output=True,
+                text=True
+            )
+            if result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                logger.info(f"🔄 Found {len(pids)} Chrome processes using our profile, terminating...")
+                for pid in pids:
+                    try:
+                        subprocess.run(['kill', '-9', pid], capture_output=True)
+                    except:
+                        pass
+                time.sleep(2)  # Wait for processes to terminate
+                logger.info("✅ Terminated stale Chrome processes")
+            
+            # Also remove singleton lock files that can prevent profile access
+            profile_path = Path(profile_dir)
+            singleton_files = ['SingletonLock', 'SingletonSocket', 'SingletonCookie']
+            for singleton in singleton_files:
+                singleton_path = profile_path / singleton
+                if singleton_path.exists() or singleton_path.is_symlink():
+                    try:
+                        singleton_path.unlink()
+                        logger.debug(f"   Removed stale {singleton}")
+                    except:
+                        pass
+        except Exception as e:
+            logger.debug(f"Could not check for existing Chrome processes: {e}")
+
     def setup_driver(self):
         """Set up Chrome driver with undetected_chromedriver for better reliability"""
         logger.info("Setting up Undetected Chrome driver...")
@@ -244,29 +283,58 @@ class SeleniumTwitterAgent:
 
         # ALWAYS use a separate Chrome profile for automation (avoids conflicts)
         # This ensures login persistence across sessions
-        # Matching the working pattern from stock_analyzer.py
         automation_profile_dir = Path.home() / self.chrome_profile_dir
         automation_profile_dir.mkdir(exist_ok=True)
         user_data_dir = str(automation_profile_dir)
         
         logger.info(f"📁 Using persistent Chrome profile: {user_data_dir}")
         
-        # Use a specific profile directory for this session
-        profile_directory = os.getenv('CHROME_PROFILE_DIRECTORY', 'TwitterAgent')
+        # Kill any existing Chrome processes using this profile to avoid conflicts
+        self._kill_existing_chrome_profile_processes(user_data_dir)
+        
+        # Use 'Default' as profile directory - undetected_chromedriver ignores custom profile names
+        # and always uses 'Default', so we check for that
+        profile_directory = "Default"
         
         # Check if profile exists and has data (indicates previous login)
         profile_path = automation_profile_dir / profile_directory
-        profile_exists = profile_path.exists() and (profile_path / "Preferences").exists()
+        cookies_exist = (profile_path / "Cookies").exists()
+        login_data_exist = (profile_path / "Login Data").exists()
+        profile_exists = profile_path.exists() and (cookies_exist or login_data_exist)
+        
         if profile_exists:
-            logger.info("✅ Found existing profile - logins should be remembered")
+            logger.info("✅ Found existing profile with saved cookies/logins")
+            if cookies_exist:
+                logger.info("   📍 Cookies file found - sessions should persist")
+            if login_data_exist:
+                logger.info("   🔐 Login data found - credentials may be saved")
+            
+            # FIX: Reset "exit_type" in Preferences to prevent "Crashed" state
+            # which blocks session restoration
+            preferences_path = profile_path / "Preferences"
+            if preferences_path.exists():
+                try:
+                    with open(preferences_path, 'r') as f:
+                        prefs = json.load(f)
+                    
+                    # Check if exit_type is "Crashed"
+                    if prefs.get('profile', {}).get('exit_type') == 'Crashed':
+                        logger.info("🔧 Fixing crashed session state...")
+                        prefs['profile']['exit_type'] = 'Normal'
+                        prefs['profile']['exited_cleanly'] = True
+                        
+                        with open(preferences_path, 'w') as f:
+                            json.dump(prefs, f)
+                        logger.info("✅ Session state fixed - logins should now persist")
+                except Exception as pref_err:
+                    logger.warning(f"Could not fix preferences: {pref_err}")
         else:
             logger.info("ℹ️  First time: You'll need to log into X.com and AI service manually")
             logger.info("ℹ️  After that: Logins will be remembered!")
         
-        # IMPORTANT: Pass both user-data-dir AND profile-directory as arguments
-        # This matches the working pattern from stock_analyzer.py
+        # IMPORTANT: Only pass user-data-dir, Chrome will use 'Default' profile automatically
+        # Do NOT pass --profile-directory as undetected_chromedriver ignores it anyway
         chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
-        chrome_options.add_argument(f"--profile-directory={profile_directory}")
 
         # Additional options for stability and profile persistence
         # Matching stock_analyzer.py pattern
@@ -307,12 +375,13 @@ class SeleniumTwitterAgent:
                 logger.warning("⚠️  Could not detect Chrome version, will auto-detect")
             
             # Find ARM64 ChromeDriver - try multiple locations
+            # Prioritize Homebrew as it handles code signing better
             chromedriver_path = None
             home_dir = str(Path.home())
             possible_paths = [
-                f"{home_dir}/bin/chromedriver",    # User local bin (recommended)
-                "/opt/homebrew/bin/chromedriver",  # Homebrew ARM Mac
+                "/opt/homebrew/bin/chromedriver",  # Homebrew ARM Mac (preferred - handles signing)
                 "/usr/local/bin/chromedriver",     # Homebrew Intel Mac
+                f"{home_dir}/bin/chromedriver",    # User local bin
                 "/usr/bin/chromedriver"            # System
             ]
             
@@ -325,15 +394,51 @@ class SeleniumTwitterAgent:
             if not chromedriver_path:
                 logger.warning("⚠️  ChromeDriver not found in standard locations, will auto-download")
             
+            # On macOS ARM, undetected_chromedriver patches the binary which invalidates signatures
+            # We need to use a workaround: pre-patch, sign, then use
+            if platform.system() == "Darwin" and chromedriver_path:
+                logger.info("🍎 macOS detected - using patched chromedriver workaround...")
+                try:
+                    # Use uc.Patcher to patch the chromedriver first
+                    from undetected_chromedriver import Patcher
+                    patcher = Patcher(executable_path=chromedriver_path)
+                    patched_path = patcher.executable_path
+                    
+                    # Patch the binary
+                    if patcher.is_binary_patched():
+                        logger.info("✅ ChromeDriver already patched")
+                    else:
+                        logger.info("🔧 Patching ChromeDriver...")
+                        patcher.auto()
+                        logger.info("✅ ChromeDriver patched")
+                    
+                    # Now sign the patched binary
+                    logger.info("🔏 Signing patched ChromeDriver for macOS...")
+                    subprocess.run(['xattr', '-cr', patched_path], capture_output=True)
+                    result = subprocess.run(['codesign', '--force', '--deep', '--sign', '-', patched_path], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        logger.info("✅ Patched ChromeDriver signed successfully")
+                    else:
+                        logger.warning(f"Signing warning: {result.stderr}")
+                    
+                    chromedriver_path = patched_path
+                except Exception as patch_err:
+                    logger.warning(f"Could not pre-patch chromedriver: {patch_err}")
+                    # Fall back to letting uc.Chrome handle it
+            
             # Create driver with ARM64 ChromeDriver
-            # IMPORTANT: user_data_dir is passed through chrome_options (matching stock_analyzer.py pattern)
+            # IMPORTANT: user_data_dir is passed through chrome_options
+            logger.info(f"🔧 Initializing with: version={chrome_major_version}, driver={chromedriver_path}")
+            
             self.driver = uc.Chrome(
                 options=chrome_options,
                 version_main=chrome_major_version,  # Use detected version
-                driver_executable_path=chromedriver_path,  # Use system ChromeDriver if available
+                driver_executable_path=chromedriver_path,  # Use pre-patched driver
                 use_subprocess=False,  # Better for ARM Macs
                 headless=self.headless,
-                suppress_welcome=True
+                suppress_welcome=True,
+                patcher_force_close=True  # Force close patcher to avoid conflicts
             )
             
             # Set a reasonable page load timeout
@@ -361,6 +466,31 @@ class SeleniumTwitterAgent:
                 logger.error("  3. Or install using arch:")
                 logger.error("     arch -arm64 python3 -m pip install --force-reinstall undetected-chromedriver")
                 logger.error("  4. Try again: python3 twitter_agent_selenium.py")
+                logger.error("=" * 80)
+            elif "max()" in error_msg or "empty sequence" in error_msg:
+                logger.error("=" * 80)
+                logger.error("🚨 ERROR: ChromeDriver version detection failed")
+                logger.error("")
+                logger.error("Fix:")
+                logger.error("  1. Clear cache: rm -rf ~/Library/Application\\ Support/undetected_chromedriver/")
+                logger.error("  2. Make sure Chrome is installed and up to date")
+                logger.error("  3. Install matching ChromeDriver:")
+                logger.error("     brew install --cask chromedriver")
+                logger.error("  4. Try again: python3 twitter_agent_selenium.py")
+                logger.error("=" * 80)
+            elif "Status code was: -9" in error_msg or "unexpectedly exited" in error_msg:
+                logger.error("=" * 80)
+                logger.error("🚨 ERROR: ChromeDriver blocked by macOS Gatekeeper")
+                logger.error("")
+                logger.error("Fix (REQUIRED - do this manually):")
+                logger.error("  1. Open System Settings → Privacy & Security")
+                logger.error("  2. Scroll down to 'Security' section")
+                logger.error("  3. Look for 'chromedriver was blocked' message")
+                logger.error("  4. Click 'Allow Anyway'")
+                logger.error("  5. Run the script again and click 'Open' when prompted")
+                logger.error("")
+                logger.error("Alternative (run in Terminal with your password):")
+                logger.error("  sudo xattr -rd com.apple.quarantine /opt/homebrew/bin/chromedriver")
                 logger.error("=" * 80)
             elif "DevToolsActivePort" in error_msg or "timed out" in error_msg.lower():
                 logger.error("=" * 80)

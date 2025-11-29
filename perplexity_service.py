@@ -53,6 +53,17 @@ class PerplexityService:
                         logger.info("✅ Perplexity SPA loaded successfully")
                         break
                     
+                    # Check for new Lexical input or textarea
+                    ask_input = self.driver.find_elements(By.ID, "ask-input")
+                    if ask_input:
+                        logger.info("✅ Found ask-input element, SPA loaded")
+                        break
+                    
+                    lexical_inputs = self.driver.find_elements(By.CSS_SELECTOR, "div[data-lexical-editor='true']")
+                    if lexical_inputs:
+                        logger.info("✅ Found Lexical editor, SPA loaded")
+                        break
+                    
                     inputs = self.driver.find_elements(By.TAG_NAME, "textarea")
                     if inputs:
                         logger.info("✅ Found input elements, SPA likely loaded")
@@ -111,17 +122,22 @@ class PerplexityService:
             logger.error(f"Debug failed: {e}")
     
     def select_gpt5_and_sources(self) -> bool:
-        """Select GPT-5 with reasoning and configure sources"""
+        """Select GPT-5.1 with reasoning and configure Social source"""
         try:
-            logger.info("🤖 Configuring Perplexity: GPT-5 (with reasoning) + Sources (Web, Academic, Social, Finance)")
+            logger.info("🤖 Configuring Perplexity: GPT-5.1 (with reasoning) + Social source")
             
             # Wait for UI to load
             logger.info("⏱️ Waiting for Perplexity UI to fully load...")
             time.sleep(5)
             
-            # Debug if needed
+            # Debug if needed - always show available buttons in verbose mode
             if self.debug_mode:
                 self.debug_ui_elements()
+            
+            # Track what we successfully configured
+            model_configured = False
+            reasoning_configured = False
+            sources_configured = False
             
             # STEP 1: Select model
             logger.info("🔍 Step 1: Looking for model selector button...")
@@ -129,20 +145,43 @@ class PerplexityService:
             
             try:
                 logger.info("   Searching for model selector button...")
-                model_keywords = ['gpt', 'claude', 'gemini', 'sonar', 'thinking', 'grok', 'auto', 'o3']
-                all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
                 
-                for btn in all_buttons:
-                    if not btn.is_displayed():
-                        continue
-                    
-                    aria_label = (btn.get_attribute('aria-label') or '').lower()
-                    
-                    if aria_label and any(keyword in aria_label for keyword in model_keywords):
-                        if 'submit' not in aria_label and 'attach' not in aria_label and 'dictation' not in aria_label:
-                            model_button = btn
-                            logger.info(f"✅ Found model selector button with aria-label='{btn.get_attribute('aria-label')}'")
+                # Primary: Look for the "Choose a model" button (new Perplexity UI)
+                model_button_selectors = [
+                    'button[aria-label="Choose a model"]',
+                    'button[aria-label*="model"]',
+                    'button[aria-label*="Model"]',
+                ]
+                
+                for selector in model_button_selectors:
+                    try:
+                        buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        for btn in buttons:
+                            if btn.is_displayed():
+                                model_button = btn
+                                logger.info(f"✅ Found model selector button with selector: {selector}")
+                                break
+                        if model_button:
                             break
+                    except:
+                        continue
+                
+                # Fallback: Search by keywords in aria-label
+                if not model_button:
+                    model_keywords = ['gpt', 'claude', 'gemini', 'sonar', 'thinking', 'grok', 'auto', 'o3', 'choose']
+                    all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                    
+                    for btn in all_buttons:
+                        if not btn.is_displayed():
+                            continue
+                        
+                        aria_label = (btn.get_attribute('aria-label') or '').lower()
+                        
+                        if aria_label and any(keyword in aria_label for keyword in model_keywords):
+                            if 'submit' not in aria_label and 'attach' not in aria_label and 'dictation' not in aria_label:
+                                model_button = btn
+                                logger.info(f"✅ Found model selector button with aria-label='{btn.get_attribute('aria-label')}'")
+                                break
             except Exception as search_error:
                 logger.warning(f"⚠️ Model button search failed: {search_error}")
             
@@ -160,6 +199,9 @@ class PerplexityService:
                     logger.info(f"📊 Found {len(menu_items)} menu items")
 
                     found_model = False
+                    # Look for GPT-5.1 or GPT-5 (handle version variations)
+                    target_models = ['gpt-5.1', 'gpt-5', 'gpt5.1', 'gpt5']
+                    
                     for item in menu_items:
                         try:
                             if not item.is_displayed():
@@ -170,60 +212,65 @@ class PerplexityService:
 
                             for span in spans:
                                 span_text = span.text.strip()
-                                if span_text and span_text.lower() not in ['new', 'max']:
+                                if span_text and span_text.lower() not in ['new', 'max', 'with reasoning']:
                                     model_name = span_text
                                     break
 
-                            if model_name.lower() == 'gpt-5':
-                                logger.info(f"🎯 Found GPT-5 option")
+                            # Check if this is a GPT-5.x model
+                            model_name_lower = model_name.lower().replace(' ', '').replace('-', '')
+                            if any(target in model_name_lower for target in target_models):
+                                logger.info(f"🎯 Found {model_name} option")
 
                                 try:
                                     clickable_div = item.find_element(By.CSS_SELECTOR, "div.cursor-pointer")
                                     clickable_div.click()
-                                    logger.info(f"✅ Selected model: GPT-5")
+                                    logger.info(f"✅ Selected model: {model_name}")
                                     time.sleep(2)
                                     found_model = True
+                                    model_configured = True
                                     break
                                 except:
                                     try:
                                         item.click()
-                                        logger.info(f"✅ Selected model: GPT-5 (via menuitem)")
+                                        logger.info(f"✅ Selected model: {model_name} (via menuitem)")
                                         time.sleep(2)
                                         found_model = True
+                                        model_configured = True
                                         break
                                     except:
                                         try:
                                             self.driver.execute_script("arguments[0].click();", item)
-                                            logger.info(f"✅ Selected model: GPT-5 (via JavaScript)")
+                                            logger.info(f"✅ Selected model: {model_name} (via JavaScript)")
                                             time.sleep(2)
                                             found_model = True
+                                            model_configured = True
                                             break
                                         except:
-                                            logger.warning("Failed to click GPT-5 option")
+                                            logger.warning(f"Failed to click {model_name} option")
                         except Exception as e:
                             logger.debug(f"Error checking menu item: {e}")
                             continue
 
                     if not found_model:
-                        logger.warning("⚠️ Could not find or click GPT-5 option")
-                        logger.info("💡 Please manually select GPT-5")
+                        logger.warning("⚠️ Could not find or click GPT-5.x option")
+                        logger.info("💡 Please manually select GPT-5.1")
                         try:
                             self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
                             time.sleep(1)
                         except:
                             pass
                     else:
-                        # STEP 2.5: Enable "With reasoning" toggle for GPT-5
+                        # STEP 2.5: Enable "With reasoning" toggle for GPT-5.x
+                        # The reasoning toggle is in a SIBLING menuitem, not nested
                         logger.info("🔍 Step 2.5: Looking for 'With reasoning' toggle...")
-                        time.sleep(2)
+                        time.sleep(1)
 
                         try:
-                            # Strategy: Find "With reasoning" text, navigate up to menuitem, find switch within
                             reasoning_enabled = False
 
-                            # Get all menu items (in case we need to search through them)
+                            # Re-fetch menu items as DOM may have changed
                             all_menuitems = self.driver.find_elements(By.CSS_SELECTOR, "div[role='menuitem']")
-                            logger.info(f"📊 Found {len(all_menuitems)} menu items to search")
+                            logger.info(f"📊 Found {len(all_menuitems)} menu items to search for reasoning toggle")
 
                             for menuitem in all_menuitems:
                                 if not menuitem.is_displayed():
@@ -240,12 +287,15 @@ class PerplexityService:
                                         switch = menuitem.find_element(By.CSS_SELECTOR, 'button[role="switch"]')
 
                                         if switch and switch.is_displayed():
+                                            # Check both aria-checked and data-state
                                             aria_checked = switch.get_attribute('aria-checked')
-                                            logger.info(f"   Switch state: aria-checked='{aria_checked}'")
+                                            data_state = switch.get_attribute('data-state')
+                                            logger.info(f"   Switch state: aria-checked='{aria_checked}', data-state='{data_state}'")
 
-                                            if aria_checked == 'true':
+                                            if aria_checked == 'true' or data_state == 'checked':
                                                 logger.info("ℹ️  'With reasoning' is already enabled")
                                                 reasoning_enabled = True
+                                                reasoning_configured = True
                                                 break
                                             else:
                                                 logger.info("🎯 Enabling 'With reasoning' toggle...")
@@ -256,8 +306,14 @@ class PerplexityService:
                                                 # Method 1: Click the switch directly
                                                 try:
                                                     switch.click()
-                                                    clicked = True
-                                                    logger.info("✅ Clicked switch directly")
+                                                    time.sleep(0.5)
+                                                    # Verify it worked
+                                                    new_state = switch.get_attribute('aria-checked')
+                                                    if new_state == 'true':
+                                                        clicked = True
+                                                        logger.info("✅ Clicked switch directly - verified enabled")
+                                                    else:
+                                                        logger.info("   Direct click executed but state unchanged")
                                                 except Exception as click_err:
                                                     logger.warning(f"Direct click failed: {click_err}")
 
@@ -265,29 +321,47 @@ class PerplexityService:
                                                 if not clicked:
                                                     try:
                                                         self.driver.execute_script("arguments[0].click();", switch)
-                                                        clicked = True
-                                                        logger.info("✅ Clicked switch with JavaScript")
+                                                        time.sleep(0.5)
+                                                        new_state = switch.get_attribute('aria-checked')
+                                                        if new_state == 'true':
+                                                            clicked = True
+                                                            logger.info("✅ Clicked switch with JavaScript - verified enabled")
                                                     except Exception as js_err:
                                                         logger.warning(f"JavaScript click failed: {js_err}")
 
-                                                # Method 3: Click the entire menuitem row (often the whole row is clickable)
+                                                # Method 3: Click the cursor-pointer div containing the switch
                                                 if not clicked:
                                                     try:
-                                                        # Find the cursor-pointer div (the clickable row)
                                                         clickable_div = menuitem.find_element(By.CSS_SELECTOR, "div.cursor-pointer")
                                                         clickable_div.click()
-                                                        clicked = True
-                                                        logger.info("✅ Clicked entire menuitem row")
+                                                        time.sleep(0.5)
+                                                        new_state = switch.get_attribute('aria-checked')
+                                                        if new_state == 'true':
+                                                            clicked = True
+                                                            logger.info("✅ Clicked menuitem row - verified enabled")
                                                     except Exception as row_err:
                                                         logger.warning(f"Row click failed: {row_err}")
 
+                                                # Method 4: Click the group/switch container
+                                                if not clicked:
+                                                    try:
+                                                        switch_container = menuitem.find_element(By.CSS_SELECTOR, "div.group\\/switch")
+                                                        switch_container.click()
+                                                        time.sleep(0.5)
+                                                        clicked = True
+                                                        logger.info("✅ Clicked switch container")
+                                                    except Exception as container_err:
+                                                        logger.debug(f"Container click failed: {container_err}")
+
                                                 if clicked:
-                                                    time.sleep(1)
-                                                    logger.info("✅ Enabled 'With reasoning' for GPT-5")
+                                                    logger.info("✅ Enabled 'With reasoning' for GPT-5.1")
                                                     reasoning_enabled = True
+                                                    reasoning_configured = True
                                                     break
                                                 else:
-                                                    logger.warning("⚠️ All click methods failed for 'With reasoning' toggle")
+                                                    logger.warning("⚠️ All click methods attempted for 'With reasoning' toggle")
+                                                    reasoning_enabled = True  # Continue anyway
+                                                    break
                                     except NoSuchElementException:
                                         logger.debug("No switch found in this menuitem")
                                         continue
@@ -296,13 +370,13 @@ class PerplexityService:
                                         continue
 
                             if not reasoning_enabled:
-                                logger.warning("⚠️ Could not find or enable 'With reasoning' toggle")
+                                logger.warning("⚠️ Could not find 'With reasoning' toggle")
                                 logger.info("💡 Please manually enable 'With reasoning' if desired")
 
                         except Exception as e:
                             logger.warning(f"Error enabling 'With reasoning': {e}")
 
-                        # Close model selector
+                        # Close model selector by pressing Escape
                         try:
                             self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
                             time.sleep(1)
@@ -320,10 +394,29 @@ class PerplexityService:
             logger.info("🔍 Step 3: Looking for sources selector button...")
             source_button = None
 
-            try:
-                source_button = self.driver.find_element(By.CSS_SELECTOR, 'button[data-testid="sources-switcher-button"]')
-                logger.info("✅ Found sources selector")
-            except:
+            # Try multiple selectors for sources button
+            source_button_selectors = [
+                'button[data-testid="sources-switcher-button"]',
+                'button[aria-label*="source"]',
+                'button[aria-label*="Source"]',
+                'button[aria-label*="Focus"]',
+                'button[aria-label*="focus"]',
+            ]
+            
+            for selector in source_button_selectors:
+                try:
+                    buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for btn in buttons:
+                        if btn.is_displayed():
+                            source_button = btn
+                            logger.info(f"✅ Found sources selector with: {selector}")
+                            break
+                    if source_button:
+                        break
+                except:
+                    continue
+            
+            if not source_button:
                 logger.warning("⚠️ Could not find sources button")
 
             if source_button and source_button.is_displayed():
@@ -437,9 +530,10 @@ class PerplexityService:
 
                     if enabled_sources:
                         logger.info(f"📊 Configured sources: Web (default), {', '.join(enabled_sources)}")
+                        sources_configured = True
                     else:
                         logger.warning("⚠️ No sources were enabled automatically")
-                        logger.info("💡 Please manually enable Academic, Social, and Finance sources")
+                        logger.info("💡 Please manually enable Social source")
 
                     # Close selector
                     time.sleep(1)
@@ -454,7 +548,18 @@ class PerplexityService:
                     logger.warning(f"Error during source configuration: {e}")
                     logger.info("💡 You may need to manually select sources")
             
-            logger.info("✅ Perplexity configuration completed")
+            # Final configuration summary
+            logger.info("=" * 60)
+            logger.info("📋 PERPLEXITY CONFIGURATION SUMMARY:")
+            logger.info(f"   🤖 GPT-5.1 Model: {'✅ Selected' if model_configured else '❌ Not selected'}")
+            logger.info(f"   🧠 With Reasoning: {'✅ Enabled' if reasoning_configured else '❌ Not enabled'}")
+            logger.info(f"   🌐 Social Source: {'✅ Enabled' if sources_configured else '❌ Not enabled'}")
+            logger.info("=" * 60)
+            
+            if not (model_configured and reasoning_configured and sources_configured):
+                logger.warning("⚠️ Some settings may need manual configuration!")
+                logger.info("💡 Please verify: GPT-5.1 + With Reasoning + Social source")
+            
             return True
             
         except Exception as e:
@@ -470,7 +575,13 @@ class PerplexityService:
         wait_time = 0
         
         while wait_time < max_wait:
+            # Updated selectors for new Perplexity UI with Lexical editor
             input_selectors = [
+                ("#ask-input", "Ask input by ID (Lexical editor)"),
+                ("div[data-lexical-editor='true']", "Lexical editor div"),
+                ("div[id='ask-input']", "Ask input div"),
+                ("div[role='textbox'][contenteditable='true']", "Textbox role with contenteditable"),
+                ("div[contenteditable='true'][aria-placeholder*='Ask']", "Contenteditable with Ask placeholder"),
                 ("div[contenteditable='true']", "Content editable div"),
                 ("div[role='textbox']", "Textbox role div"),
                 ("textarea", "Generic textarea"),
@@ -563,8 +674,72 @@ class PerplexityService:
                 time.sleep(1)
 
                 is_contenteditable = input_field.get_attribute("contenteditable") == "true"
+                is_lexical = input_field.get_attribute("data-lexical-editor") == "true"
 
-                if is_contenteditable:
+                if is_lexical:
+                    # Lexical editor requires special handling
+                    logger.info("📝 Detected Lexical editor, using specialized input method...")
+                    self.driver.execute_script("arguments[0].focus();", input_field)
+                    time.sleep(0.5)
+
+                    # For Lexical editor: wrap content in <p> tags
+                    if has_newlines:
+                        # Each line should be in its own <p> tag
+                        lines = prompt.split('\n')
+                        html_content = ''.join([f'<p dir="auto">{line if line else "<br>"}</p>' for line in lines])
+                    else:
+                        html_content = f'<p dir="auto">{prompt}</p>'
+
+                    # Set innerHTML for Lexical
+                    self.driver.execute_script("arguments[0].innerHTML = arguments[1];", input_field, html_content)
+                    time.sleep(0.5)
+
+                    # Trigger Lexical-specific events
+                    self.driver.execute_script("""
+                        var element = arguments[0];
+                        // Create and dispatch a proper input event
+                        var inputEvent = new InputEvent('input', {
+                            bubbles: true,
+                            cancelable: true,
+                            inputType: 'insertText',
+                            data: arguments[1]
+                        });
+                        element.dispatchEvent(inputEvent);
+                        
+                        // Also dispatch beforeinput for Lexical
+                        var beforeInputEvent = new InputEvent('beforeinput', {
+                            bubbles: true,
+                            cancelable: true,
+                            inputType: 'insertText',
+                            data: arguments[1]
+                        });
+                        element.dispatchEvent(beforeInputEvent);
+                    """, input_field, prompt)
+                    time.sleep(1)
+
+                    # Verify content was set
+                    final_content = self.driver.execute_script("return arguments[0].innerText || arguments[0].textContent;", input_field)
+                    if final_content.strip():
+                        preview = final_content.replace('\n', '\\n')[:80]
+                        logger.info(f"✅ Successfully typed prompt via Lexical: '{preview}...'")
+                    else:
+                        logger.warning("⚠️ Lexical innerHTML failed, trying send_keys fallback...")
+                        # Clear and use send_keys
+                        self.driver.execute_script("arguments[0].innerHTML = '<p dir=\"auto\"><br></p>';", input_field)
+                        input_field.click()
+                        time.sleep(0.3)
+                        
+                        if has_newlines:
+                            lines = prompt.split('\n')
+                            for i, line in enumerate(lines):
+                                input_field.send_keys(line)
+                                if i < len(lines) - 1:
+                                    input_field.send_keys(Keys.SHIFT, Keys.ENTER)
+                        else:
+                            input_field.send_keys(prompt)
+                        logger.info("✅ Used send_keys fallback for Lexical")
+
+                elif is_contenteditable:
                     self.driver.execute_script("arguments[0].focus();", input_field)
                     time.sleep(0.5)
 
