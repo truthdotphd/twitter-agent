@@ -76,6 +76,8 @@ class SeleniumTwitterAgent:
         4) Don't add price changes after the stock tickers
         5) Don't ask any question and only output the final response
         6) Do NOT ADD ANY REFERENCES or SOURCES or CITED LINKS or FINANCE PRICE CHANGES IN YOUR RESPONSE!! JUST WORDS WITH NO LINKS OR PRICE DATA!
+        7) Do NOT apologize and DO NOT refuse to answer AND DO NOT ask further questions
+        8) Do NOT ADD ANY LINKS to external sources
         """
         # Configuration from environment
         self.ai_service = os.getenv('AI_SERVICE', 'perplexity').lower()
