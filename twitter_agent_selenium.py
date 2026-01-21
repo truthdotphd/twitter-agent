@@ -77,7 +77,7 @@ class SeleniumTwitterAgent:
         5) Don't ask any question and only output the final response
         6) Do NOT ADD ANY REFERENCES or SOURCES or CITED LINKS or FINANCE PRICE CHANGES IN YOUR RESPONSE!! JUST WORDS WITH NO LINKS OR PRICE DATA!
         7) Do NOT apologize and DO NOT refuse to answer AND DO NOT ask further questions
-        8) Do NOT ADD ANY LINKS to external sources
+        8) Do NOT ADD ANY LINKS to external sources;  Do NOT ADD ANY LINKS to external sources;  Do NOT ADD ANY LINKS to external sources!!!!!!
         """
         # Configuration from environment
         self.ai_service = os.getenv('AI_SERVICE', 'perplexity').lower()
@@ -346,12 +346,20 @@ class SeleniumTwitterAgent:
         chrome_options.add_argument("--disable-popup-blocking")
         chrome_options.add_argument("--no-sandbox")
         
+        # Session persistence improvements
+        # Note: undetected_chromedriver handles automation flags internally, don't add them manually
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        
         # Configure preferences for login persistence
         # Note: Keep credentials ENABLED (unlike stock_analyzer) for login persistence
         chrome_options.add_experimental_option("prefs", {
             "credentials_enable_service": True,  # KEEP TRUE for login persistence
             "profile.password_manager_enabled": True,  # KEEP TRUE for login persistence
-            "profile.default_content_setting_values.notifications": 2  # Disable notifications
+            "profile.default_content_setting_values.notifications": 2,  # Disable notifications
+            "profile.exit_type": "Normal",  # Prevent "crashed" state
+            "profile.exited_cleanly": True,  # Ensure clean exit
+            "profile.default_content_settings.cookies": 1,  # Allow cookies
+            "profile.block_third_party_cookies": False  # Allow third-party cookies for auth
         })
 
         try:
@@ -396,6 +404,28 @@ class SeleniumTwitterAgent:
             if not chromedriver_path:
                 logger.warning("⚠️  ChromeDriver not found in standard locations, will auto-download")
             
+            # Validate ChromeDriver version matches Chrome version
+            if chromedriver_path and chrome_major_version:
+                try:
+                    chromedriver_version_output = subprocess.check_output([
+                        chromedriver_path, "--version"
+                    ]).decode('utf-8').strip()
+                    # Extract version from output like "ChromeDriver 142.0.6261.94"
+                    chromedriver_version = chromedriver_version_output.split()[1]
+                    chromedriver_major_version = int(chromedriver_version.split('.')[0])
+                    
+                    logger.info(f"🔍 Found ChromeDriver version: {chromedriver_version} (major: {chromedriver_major_version})")
+                    
+                    # Check for version mismatch
+                    if chromedriver_major_version != chrome_major_version:
+                        logger.warning(f"⚠️  Version mismatch: Chrome {chrome_major_version} vs ChromeDriver {chromedriver_major_version}")
+                        logger.info(f"🔄 Will let undetected_chromedriver auto-download correct version")
+                        chromedriver_path = None  # Let uc.Chrome auto-download the correct version
+                except Exception as version_check_err:
+                    logger.warning(f"Could not verify ChromeDriver version: {version_check_err}")
+                    logger.info("🔄 Will let undetected_chromedriver auto-download correct version")
+                    chromedriver_path = None
+            
             # On macOS ARM, undetected_chromedriver patches the binary which invalidates signatures
             # We need to use a workaround: pre-patch, sign, then use
             if platform.system() == "Darwin" and chromedriver_path:
@@ -431,17 +461,27 @@ class SeleniumTwitterAgent:
             
             # Create driver with ARM64 ChromeDriver
             # IMPORTANT: user_data_dir is passed through chrome_options
-            logger.info(f"🔧 Initializing with: version={chrome_major_version}, driver={chromedriver_path}")
+            if chromedriver_path:
+                logger.info(f"🔧 Initializing with: version={chrome_major_version}, driver={chromedriver_path}")
+            else:
+                logger.info(f"🔧 Initializing with: version={chrome_major_version}, auto-downloading driver")
             
-            self.driver = uc.Chrome(
-                options=chrome_options,
-                version_main=chrome_major_version,  # Use detected version
-                driver_executable_path=chromedriver_path,  # Use pre-patched driver
-                use_subprocess=False,  # Better for ARM Macs
-                headless=self.headless,
-                suppress_welcome=True,
-                patcher_force_close=True  # Force close patcher to avoid conflicts
-            )
+            # Build kwargs dynamically - only include driver_executable_path if we have one
+            chrome_kwargs = {
+                "options": chrome_options,
+                "use_subprocess": False,  # Better for ARM Macs
+                "headless": self.headless,
+                "suppress_welcome": True,
+                "patcher_force_close": True  # Force close patcher to avoid conflicts
+            }
+            
+            if chrome_major_version:
+                chrome_kwargs["version_main"] = chrome_major_version
+            
+            if chromedriver_path:
+                chrome_kwargs["driver_executable_path"] = chromedriver_path
+            
+            self.driver = uc.Chrome(**chrome_kwargs)
             
             # Set a reasonable page load timeout
             self.driver.set_page_load_timeout(60)
@@ -571,37 +611,157 @@ class SeleniumTwitterAgent:
             return None
 
     def navigate_to_twitter(self) -> bool:
-        """Navigate to Twitter and check login status"""
+        """Navigate to Twitter and check login status with improved session persistence"""
         try:
             logger.info("Navigating to X.com...")
-            self.driver.get("https://x.com")
-            time.sleep(5)
-
-            # Check if we're logged in by looking for specific elements
-            try:
-                # Look for the home timeline or user menu
-                home_element = self.driver.find_element(By.CSS_SELECTOR, '[data-testid="AppTabBar_Home_Link"]')
-                logger.info("Successfully logged in to X.com")
-
+            self.driver.get("https://x.com/home")  # Go directly to /home instead of root
+            
+            # Wait longer for session restoration (Twitter needs time to check cookies)
+            logger.info("⏳ Waiting for session to restore from cookies...")
+            time.sleep(8)  # Increased from 5 to 8 seconds
+            
+            # Try to refresh if we're on a weird intermediate page
+            current_url = self.driver.current_url
+            if "login" in current_url.lower() or "signin" in current_url.lower():
+                logger.info("🔄 Detected login page, trying one refresh to restore session...")
+                self.driver.refresh()
+                time.sleep(6)
+            
+            # Check if we're logged in by looking for multiple possible indicators
+            # This is more robust than checking just one element
+            logged_in = False
+            login_indicators = [
+                ('CSS', '[data-testid="AppTabBar_Home_Link"]', 'Home tab'),
+                ('CSS', '[data-testid="SideNav_AccountSwitcher_Button"]', 'Account switcher'),
+                ('CSS', '[aria-label="Account menu"]', 'Account menu'),
+                ('CSS', '[data-testid="SideNav_NewTweet_Button"]', 'New tweet button'),
+                ('XPATH', '//a[@href="/compose/tweet"]', 'Compose button'),
+            ]
+            
+            for selector_type, selector, description in login_indicators:
+                try:
+                    if selector_type == 'CSS':
+                        element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    else:
+                        element = self.driver.find_element(By.XPATH, selector)
+                    
+                    if element:
+                        logger.info(f"✅ Successfully logged in to X.com (detected: {description})")
+                        logged_in = True
+                        break
+                except NoSuchElementException:
+                    continue
+            
+            if logged_in:
+                # Save cookies after successful login detection
+                self._save_twitter_session()
+                
                 # Select the appropriate feed after successful login
                 if not self.select_feed():
                     logger.warning("Failed to select feed, continuing with default")
-
+                
                 return True
-            except NoSuchElementException:
+            else:
+                # Check if we see a login/signin button
                 try:
-                    # Look for sign in button
                     signin_element = self.driver.find_element(By.XPATH, "//span[contains(text(), 'Sign in')]")
-                    logger.warning("Not logged in to X.com. Please log in manually.")
-                    input("Please log in to X.com in the browser window and press Enter to continue...")
+                    logger.warning("⚠️  Not logged in to X.com. Session cookies may have expired.")
+                    logger.info("📝 Please log in to X.com in the browser window...")
+                    input("👉 Press Enter after you've logged in to continue...")
                     time.sleep(3)
+                    
+                    # Save cookies after manual login
+                    self._save_twitter_session()
+                    
                     return self.navigate_to_twitter()  # Check again
                 except NoSuchElementException:
+                    # No clear login button, might already be logged in
                     logger.info("Login status unclear, proceeding...")
                     return True
 
         except Exception as e:
             logger.error(f"Error navigating to X.com: {e}")
+            return False
+    
+    def _save_twitter_session(self):
+        """Save Twitter session cookies and local storage for better persistence"""
+        try:
+            # Get current cookies
+            cookies = self.driver.get_cookies()
+            
+            # Get local storage (contains auth tokens)
+            local_storage = self.driver.execute_script("return window.localStorage;")
+            
+            # Save to profile directory
+            profile_dir = Path.home() / self.chrome_profile_dir / "Default"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            
+            session_file = profile_dir / "twitter_session.json"
+            session_data = {
+                "cookies": cookies,
+                "local_storage": local_storage,
+                "timestamp": time.time(),
+                "url": self.driver.current_url
+            }
+            
+            with open(session_file, 'w') as f:
+                json.dump(session_data, f, indent=2)
+            
+            logger.debug(f"💾 Saved Twitter session data (cookies + local storage)")
+            
+        except Exception as e:
+            logger.debug(f"Could not save Twitter session: {e}")
+    
+    def _restore_twitter_session(self):
+        """Restore Twitter session from saved cookies and local storage"""
+        try:
+            profile_dir = Path.home() / self.chrome_profile_dir / "Default"
+            session_file = profile_dir / "twitter_session.json"
+            
+            if not session_file.exists():
+                logger.debug("No saved Twitter session found")
+                return False
+            
+            with open(session_file, 'r') as f:
+                session_data = json.load(f)
+            
+            # Check if session is not too old (7 days)
+            age_days = (time.time() - session_data.get("timestamp", 0)) / 86400
+            if age_days > 7:
+                logger.debug(f"Saved session is {age_days:.1f} days old, may be expired")
+            
+            # First navigate to Twitter
+            self.driver.get("https://x.com")
+            time.sleep(2)
+            
+            # Restore cookies
+            for cookie in session_data.get("cookies", []):
+                try:
+                    # Remove expiry if it's in the past
+                    if 'expiry' in cookie:
+                        if cookie['expiry'] < time.time():
+                            del cookie['expiry']
+                    self.driver.add_cookie(cookie)
+                except Exception as cookie_err:
+                    logger.debug(f"Could not restore cookie: {cookie_err}")
+            
+            # Restore local storage
+            local_storage = session_data.get("local_storage", {})
+            if local_storage:
+                for key, value in local_storage.items():
+                    try:
+                        self.driver.execute_script(
+                            f"window.localStorage.setItem(arguments[0], arguments[1]);",
+                            key, value
+                        )
+                    except Exception as ls_err:
+                        logger.debug(f"Could not restore local storage item: {ls_err}")
+            
+            logger.info("✅ Restored Twitter session from saved data")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Could not restore Twitter session: {e}")
             return False
 
     def select_feed(self) -> bool:
@@ -1526,6 +1686,10 @@ class SeleniumTwitterAgent:
             return
 
         try:
+            # Try to restore previous session before navigating
+            logger.info("🔐 Attempting to restore previous Twitter session...")
+            self._restore_twitter_session()
+            
             # Navigate to Twitter and login
             if not self.navigate_to_twitter():
                 return
@@ -1718,8 +1882,14 @@ class SeleniumTwitterAgent:
         finally:
             logger.info("Browser will remain open for inspection. Close manually when done.")
             try:
+                # Save session before closing
+                if self.driver:
+                    logger.info("💾 Saving Twitter session for next time...")
+                    self._save_twitter_session()
+                
                 input("Press Enter to close browser...")
-                self.driver.quit()
+                if self.driver:
+                    self.driver.quit()
             except:
                 pass
 

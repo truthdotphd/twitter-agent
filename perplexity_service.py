@@ -426,7 +426,7 @@ class PerplexityService:
                     time.sleep(3)
 
                     # Sources we want to enable (by display text)
-                    sources_to_enable = ['Social'] # ['Academic', 'Social', 'Finance']
+                    sources_to_enable = [] # ['Academic', 'Social', 'Finance']
 
                     logger.info(f"🔍 Step 4: Enabling sources: {', '.join(sources_to_enable)}")
                     enabled_sources = []
